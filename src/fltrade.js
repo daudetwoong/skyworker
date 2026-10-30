@@ -7,6 +7,7 @@ function tailComp(windDir, windSpd, track) {
 
 // model: parseOFP 결과. 반환: {levels:[{fl,timeMin,dMin,avgComp,avgTemp,isPlanned}], mach, cruiseDist, plannedLevelFl, computedPlannedMin}
 export function flTrade(model) {
+  if (model?.windMatrix?.type === 'cfp') return flTradeCfp(model);
   const { navlog, windMatrix, plannedFL } = model;
   if (!navlog?.length || !windMatrix?.rows?.length) return null;
   const tocIdx = navlog.findIndex((r) => r.point === 'TOC');
@@ -66,4 +67,62 @@ export function flTrade(model) {
   if (!planned) return null;
   levels.forEach((x) => { x.dMin = Math.round(x.timeMin - planned.timeMin); });
   return { levels, mach: Math.round(mach * 1000) / 1000, cruiseDist, plannedLevelFl: planned.fl, computedPlannedMin: Math.round(planned.timeMin) };
+}
+
+// CFP 매트릭스: FL별 바람성분·온도가 웨이포인트마다 미리 계산돼 있음 → 직접 합산
+function flTradeCfp(model) {
+  const { navlog, windMatrix, plannedFL } = model;
+  if (!navlog?.length || !windMatrix?.byPoint?.size) return null;
+  const tocIdx = navlog.findIndex((r) => r.point === 'TOC');
+  const todIdx = navlog.findIndex((r) => r.point === 'TOD');
+  if (tocIdx < 0 || todIdx <= tocIdx) return null;
+  const segs = navlog.slice(tocIdx + 1, todIdx + 1).filter((r) => r.dist > 0);
+  if (!segs.length) return null;
+
+  // 순항 구간에서 실제로 데이터가 있는 레벨만 (ALTN/2차플랜 매트릭스 혼입 차단)
+  const cover = {};
+  for (const lv of windMatrix.levels) {
+    cover[lv] = segs.filter((s) => windMatrix.byPoint.get(s.point)?.[lv]).length;
+  }
+  const need = Math.max(3, Math.floor(segs.length * 0.5));
+  const levels = windMatrix.levels.filter((lv) => cover[lv] >= need);
+  if (!levels.length) return null;
+
+  // 마하: TAS 있는 구간의 계획 FL 온도로 역산한 값들의 중앙값 (추출 글리치 행 내성)
+  const pLv = levels.reduce((a, b) => Math.abs(b - (plannedFL || 350)) < Math.abs(a - (plannedFL || 350)) ? b : a);
+  const machs = [];
+  for (const s of segs) {
+    const e = windMatrix.byPoint.get(s.point)?.[pLv];
+    if (s.tas && s.tas > 350 && s.tas < 520 && e) machs.push(s.tas / (A_SOUND * Math.sqrt(273.15 + e.temp)));
+  }
+  if (!machs.length) return null;
+  machs.sort((a, b) => a - b);
+  const mach = machs[Math.floor(machs.length / 2)];
+
+  const cruiseDist = segs.reduce((a, s) => a + s.dist, 0);
+  const rows = levels.map((lv) => {
+    let tMin = 0, compSum = 0, tempSum = 0, bad = false;
+    let last = null;
+    for (const s of segs) {
+      const e = windMatrix.byPoint.get(s.point)?.[lv] || last;
+      if (!e) { bad = true; break; }
+      last = e;
+      const tas = mach * A_SOUND * Math.sqrt(273.15 + e.temp);
+      const gs = tas + e.comp;
+      if (gs < 60) { bad = true; break; }
+      tMin += (s.dist / gs) * 60;
+      compSum += e.comp * s.dist;
+      tempSum += e.temp * s.dist;
+    }
+    return bad ? null : {
+      fl: lv, timeMin: tMin,
+      avgComp: Math.round(compSum / cruiseDist),
+      avgTemp: Math.round(tempSum / cruiseDist),
+      isPlanned: lv === pLv,
+    };
+  }).filter(Boolean);
+  const planned = rows.find((x) => x.isPlanned);
+  if (!planned) return null;
+  rows.forEach((x) => { x.dMin = Math.round(x.timeMin - planned.timeMin); });
+  return { levels: rows, mach: Math.round(mach * 1000) / 1000, cruiseDist, plannedLevelFl: planned.fl, computedPlannedMin: Math.round(planned.timeMin) };
 }

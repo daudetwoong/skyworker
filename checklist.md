@@ -23,6 +23,8 @@
 ## Phase 2 — 비행 도구
 
 - [x] OFP 붙여넣기 + OZ(APMS) 파서 + ICAO FPL 범용 폴백 (실OFP 검증 ±1분)
+- [x] **OFP PDF 업로드** (드래그&드롭, pdf.js 내장, 기기 안 처리) — 실 브리핑 PDF 54쪽 E2E 통과
+- [x] CFP 포맷 파서 (실물 PDF 양식: 3줄 항법로그·FL행 매트릭스) + CFP FL트레이드 (±1분 검증)
 - [x] FL 트레이드: 바람 매트릭스 → 고도별 Δ시간·예상 ETA (계획행 하이라이트)
 - [x] 타임라인: ETD/TOC/FIR(EET)/TOD/ETA + 도착 주·야 판정
 - [x] 연료 카드(TRIP~RAMP+중량+DISP REMARK) · 교체공항 요약

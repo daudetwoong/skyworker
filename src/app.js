@@ -151,22 +151,37 @@ function kv(body, pairs) {
 function summaryCard() {
   return briefCard('summary', t('cardSummary'), (b) => {
     const m = model;
-    const legLine = el('div', 'leg');
-    legLine.append(el('b', null, m.fltNo || m.callsign || '—'), el('span', 'leg-route', ` ${m.dep?.iata || m.depIcao} → ${m.dest?.iata || m.destIcao}`));
-    if (m.date) legLine.append(el('span', 'leg-date', ` · ${m.date.getUTCFullYear()}-${String(m.date.getUTCMonth() + 1).padStart(2, '0')}-${String(m.date.getUTCDate()).padStart(2, '0')}`));
-    b.append(legLine);
+    const hero = el('div', 'hero');
+    const route = el('div', 'hero-route');
+    route.append(el('span', 'hero-ap', m.dep?.iata || m.depIcao || '—'), el('span', 'hero-arrow', '✈'), el('span', 'hero-ap', m.dest?.iata || m.destIcao || '—'));
+    hero.append(route);
+    const subBits = [m.fltNo || m.callsign];
+    if (m.date) subBits.push(`${m.date.getUTCFullYear()}-${String(m.date.getUTCMonth() + 1).padStart(2, '0')}-${String(m.date.getUTCDate()).padStart(2, '0')}`);
+    if (m.reg) subBits.push(m.reg + (m.actype ? ' · ' + m.actype : ''));
+    if (m.ci != null) subBits.push('CI' + m.ci);
+    hero.append(el('div', 'hero-sub', subBits.filter(Boolean).join('  ·  ')));
+    if (m.dep?.etd && m.dest?.eta) {
+      const bar = el('div', 'hero-bar');
+      bar.append(el('span', 'hero-time', fmtHmZ(m.dep.etd, m.dep.tzMin)));
+      const track = el('div', 'hero-track');
+      track.append(el('div', 'hero-plane', '✈︎'));
+      bar.append(track);
+      bar.append(el('span', 'hero-time', fmtHmZ(m.dest.eta, m.dest.tzMin)));
+      hero.append(bar);
+    }
+    b.append(hero);
     if (m.src === 'ICAO-FPL') b.append(el('div', 'note', t('genericNote')));
     kv(b, [
-      ['STD', m.dep?.std ? fmtHmZ(m.dep.std, m.dep.tzMin) : null],
+      ['STD', m.dep?.std && m.dep.std !== m.dep.etd ? fmtHmZ(m.dep.std, m.dep.tzMin) : null],
       ['ETD', m.dep?.etd ? fmtHmZ(m.dep.etd, m.dep.tzMin) : null],
-      ['STA', m.dest?.sta ? fmtHmZ(m.dest.sta, m.dest.tzMin) : null],
+      ['STA', m.dest?.sta && m.dest.sta !== m.dest.eta ? fmtHmZ(m.dest.sta, m.dest.tzMin) : null],
       ['ETA', m.dest?.eta ? fmtHmZ(m.dest.eta, m.dest.tzMin) : null],
-      [t('reg'), m.reg ? `${m.reg}${m.actype ? ' · ' + m.actype : ''}` : m.actype],
-      ['CI', m.ci],
       [t('planFl'), m.plannedFL ? 'FL' + m.plannedFL : null],
       [t('dist'), m.dist ? `${m.dist.gnd}nm (GND)` : null],
       [t('avgWind'), m.avgComp != null ? `${m.avgComp >= 0 ? '+' : ''}${m.avgComp}kt` : null],
       [t('block'), m.eetTotal ? `${Math.floor(m.eetTotal / 60)}:${String(m.eetTotal % 60).padStart(2, '0')}` : null],
+      [t('validity'), m.validity || null],
+      [t('dispatcher'), m.dispatcher || null],
     ]);
     if (m.route) b.append(el('div', 'raw route', m.route));
   });
@@ -183,11 +198,11 @@ function fuelCard() {
     const rows = [
       ['fTrip', f.trip], ['fCont', f.cont], ['fAltn', f.altn, model.altnIcao], ['fFrsv', f.frsv],
       ['fRqrd', f.rqrd], ['fExtra', f.extra, f.extra?.extra ? 'RSN/' + f.extra.extra : null],
-      ['fTkof', f.tkof], ['fTaxi', f.taxi], ['fRamp', f.ramp],
+      ['fTkof', f.tkof], ['fTaxi', f.taxi], ['fRamp', f.ramp], ['fFod', f.fod],
     ];
     for (const [key, v, note] of rows) {
       if (!v) continue;
-      const tr = el('tr', ['fRqrd', 'fTkof', 'fRamp'].includes(key) ? 'row-strong' : null);
+      const tr = el('tr', ['fRqrd', 'fTkof', 'fRamp', 'fFod'].includes(key) ? 'row-strong' : null);
       tr.append(el('td', null, t(key) + (note ? ` ${note}` : '')), el('td', 'num', p100lbs(v.v)), el('td', 'num', hm(v.time)));
       tb.append(tr);
     }
@@ -310,21 +325,67 @@ function flightView(container) {
   const rawText = store.get('sw_ofp_text', '');
   if (!rawText) {
     const box = el('div', 'paste-box');
-    box.append(el('h2', null, t('pasteTitle')));
-    box.append(el('p', 'sub-line', t('pasteHint')));
-    const ta = el('textarea', 'ofp-input');
-    ta.placeholder = t('ofpPlaceholder');
-    const btn = el('button', 'primary', t('buildBrief'));
     const err = el('div', 'err');
-    btn.onclick = () => {
-      const parsed = parseOFP(ta.value || '');
-      if (!parsed.ok) { err.textContent = t('parseFail'); return; }
-      store.set('sw_ofp_text', ta.value);
+    const prog = el('div', 'drop-progress');
+    prog.hidden = true;
+
+    const acceptText = (text) => {
+      const parsed = parseOFP(text || '');
+      if (!parsed.ok) { err.textContent = t('parseFail'); prog.hidden = true; return; }
+      store.set('sw_ofp_text', text);
       model = null;
       render();
       refreshWx();
     };
-    box.append(ta, btn, err);
+    const handleFile = async (file) => {
+      err.textContent = '';
+      try {
+        if (/pdf$/i.test(file.name) || file.type === 'application/pdf') {
+          prog.hidden = false;
+          prog.textContent = t('parsing');
+          const { extractPdfText } = await import('./pdfread.js');
+          const buf = await file.arrayBuffer();
+          const text = await extractPdfText(buf, (i, n) => { prog.textContent = `${t('parsing')} ${i}/${n}`; });
+          acceptText(text);
+        } else {
+          acceptText(await file.text());
+        }
+      } catch (e) {
+        prog.hidden = true;
+        err.textContent = `${t('fileBad')} (${e.message})`;
+      }
+    };
+
+    const drop = el('div', 'dropzone');
+    drop.append(el('div', 'drop-icon', '🛫'));
+    drop.append(el('h2', null, t('dropTitle')));
+    drop.append(el('p', 'sub-line', t('dropHint')));
+    const fi = document.createElement('input');
+    fi.type = 'file';
+    fi.accept = '.pdf,.txt,application/pdf,text/plain';
+    fi.hidden = true;
+    fi.onchange = () => { if (fi.files[0]) handleFile(fi.files[0]); };
+    drop.onclick = () => fi.click();
+    drop.ondragover = (ev) => { ev.preventDefault(); drop.classList.add('drag'); };
+    drop.ondragleave = () => drop.classList.remove('drag');
+    drop.ondrop = (ev) => {
+      ev.preventDefault();
+      drop.classList.remove('drag');
+      const f = ev.dataTransfer?.files?.[0];
+      if (f) handleFile(f);
+    };
+    box.append(drop, fi, prog, err);
+
+    const det = document.createElement('details');
+    det.className = 'paste-alt';
+    const sum = el('summary', null, t('orPaste'));
+    det.append(sum);
+    const ta = el('textarea', 'ofp-input');
+    ta.placeholder = t('ofpPlaceholder');
+    const btn = el('button', 'primary', t('buildBrief'));
+    btn.onclick = () => acceptText(ta.value);
+    det.append(ta, btn);
+    box.append(det);
     container.append(box);
     return;
   }

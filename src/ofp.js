@@ -104,10 +104,187 @@ function parseWindMatrix(text) {
   return out.rows.length ? out : null;
 }
 
+
+// ── CFP 포맷 (FLIGHT RELEASE ... / 3줄 항법로그 / FL행 바람매트릭스) ──
+function parseCfpNavlog(lines) {
+  const rows = [];
+  for (let i = 0; i < lines.length - 2; i++) {
+    const l1 = lines[i], l2 = lines[i + 1];
+    if (!/^\s*\d{4}\s+[NS]\d{2}/.test(l1)) continue;
+    const t1 = l1.trim().split(/\s+/);
+    const m2 = l2.trim().match(/^([A-Z0-9]{2,7})\s+[EW]\d{2,3}\s/);
+    if (!m2) continue;
+    const t2 = l2.trim().split(/\s+/);
+    // line1: dist N.. ..  MC FL ETO/MSA RF OT WIND SR TAS ZT BO
+    const fl = t1[4];
+    let wind = null, comp = null, tas = null;
+    for (let k = 5; k < t1.length; k++) {
+      const w = t1[k].match(/^(\d{3})(\d{2})([PM])(\d{3})$/);
+      if (w) { wind = { dir: +w[1] || 360, spd: +w[2] }; comp = (w[3] === 'M' ? -1 : 1) * +w[4]; }
+      else if (/^\d{5}$/.test(t1[k]) && /^[+-]?\d{3}$/.test(t1[k + 1] || '') && k > 6) {
+        wind = { dir: +t1[k].slice(0, 3) || 360, spd: +t1[k].slice(3) }; comp = parseInt(t1[k + 1], 10);
+      }
+      if (wind) {
+        const after = t1.slice(k + 1).filter((x) => /^\d{3}$/.test(x) && x !== t1[k + 1]);
+        if (after.length) tas = +after[0] >= 250 ? +after[0] : (+after[1] >= 250 ? +after[1] : null);
+        break;
+      }
+    }
+    const accTok = [...t2].reverse().find((x) => /^\d{2}\.\d{2}$/.test(x));
+    const gsIdx = accTok ? t2.indexOf(accTok) - 1 : -1;
+    const l3 = (lines[i + 2] || '').trim().split(/\s+/);
+    rows.push({
+      dist: +t1[0],
+      point: m2[1],
+      fl: /^\d{3}$/.test(fl) ? +fl : fl,
+      mc: +t1[3] || null,
+      tc: /^\d{3}$/.test(l3[0] || '') ? +l3[0] : null,
+      gs: gsIdx >= 0 && /^\d{3}$/.test(t2[gsIdx] || '') ? +t2[gsIdx] : null,
+      wind, comp, tas,
+      accMin: accTok ? hmToMin(accTok) : null,
+      fir: null,
+    });
+    i += 1;
+  }
+  return rows;
+}
+
+function parseCfpMatrix(lines) {
+  // FL행 블록(351 -55 01021-017-36 ...) 4열 + 아래 웨이포인트 이름줄
+  const byPoint = new Map(); // name -> {fl: {dir,spd,comp,temp}}
+  const levels = new Set();
+  let pending = []; // [{fl, entries:[{...}x4]}]
+  const entryRe = /(\d{3})(\d{2})([+\-])(\d{3})([+\-])(\d{2})/g;
+  for (const line of lines) {
+    const row = line.match(/^\s*(\d{3})\s+(-?\d{1,3})\s+((?:\d{5}[+\-]\d{3}[+\-]\d{2}\s*)+)$/);
+    if (row) {
+      const entries = [...row[3].matchAll(entryRe)].map((e) => ({
+        dir: +e[1] || 360, spd: +e[2], comp: (e[3] === '-' ? -1 : 1) * +e[4], temp: (e[5] === '-' ? -1 : 1) * +e[6],
+      }));
+      pending.push({ fl: +row[1], entries });
+      levels.add(+row[1]);
+      continue;
+    }
+    const names = line.match(/^\s{6,}([A-Z][A-Z0-9]{1,6}(?:\s+[A-Z][A-Z0-9]{1,6}){0,3})\s*$/);
+    if (names && pending.length) {
+      const ns = names[1].trim().split(/\s+/);
+      for (const p of pending) {
+        p.entries.forEach((e, ci) => {
+          const n = ns[ci];
+          if (!n) return;
+          if (!byPoint.has(n)) byPoint.set(n, {});
+          byPoint.get(n)[p.fl] = e;
+        });
+      }
+      pending = [];
+      continue;
+    }
+    if (pending.length && /[a-z]/.test(line)) pending = [];
+  }
+  if (!byPoint.size) return null;
+  return { type: 'cfp', levels: [...levels].sort((a, b) => a - b), byPoint };
+}
+
+function parseCfp(text, fpl, model) {
+  const lines = text.split('\n');
+  const rel = text.match(/FLIGHT RELEASE\s+([A-Z]{3}\d{1,4})\s+([A-Z]{4})\/([A-Z]{4})\s+ON\s+(\d{2})\/([A-Z]{3})\/(\d{2})/);
+  if (!rel) return false;
+  model.src = 'OZ-CFP';
+  model.callsign = rel[1];
+  model.fltNo = rel[1].replace(/^AAR/, 'OZ').replace(/^KAL/, 'KE');
+  model.depIcao = rel[2];
+  model.destIcao = rel[3];
+  model.date = new Date(Date.UTC(2000 + +rel[6], MONTHS[rel[5]] ?? 0, +rel[4]));
+  const reg = text.match(/\b(HL\d{4}|HL7\w{3}|HL8\w{3})\b/); if (reg) model.reg = reg[1];
+  const ci = text.match(/CRZ-\s*(\d+)/); if (ci) model.ci = +ci[1];
+  const wt = text.match(/AVG WIND\/TEMP[\s\S]{0,120}?([PM]\d{3})\/([PM]\d{2})/); if (wt) { model.avgComp = pm(wt[1]); model.avgTemp = pm(wt[2]); }
+
+  // 시각: ETD ZUTF 1630Z ETA RKSI 1940Z + HRS UTC+0900(도착지 로컬)
+  const et = text.match(/ETD\s+([A-Z]{4})\s+(\d{4})Z\s+ETA\s+([A-Z]{4})\s+(\d{4})Z/);
+  const tz = text.match(/HRS UTC([+-])(\d{2})(\d{2})/);
+  const destTz = tz ? (tz[1] === '-' ? -1 : 1) * (+tz[2] * 60 + +tz[3]) : null;
+  if (et) {
+    const f = (s) => s.slice(0, 2) + '.' + s.slice(2);
+    model.dep = { icao: et[1], iata: null, tzMin: null, std: f(et[2]), etd: f(et[2]) };
+    model.dest = { icao: et[3], iata: null, tzMin: destTz, sta: f(et[4]), eta: f(et[4]) };
+  }
+
+  // 연료 (CFP 라벨 → 공용 키)
+  const fuel = {};
+  const fr = (name, re) => { const m = text.match(re); if (m) fuel[name] = { v: +m[1], time: m[2] || null, extra: m[3] || null }; };
+  const tr = text.match(/^TRIP\s+(\d{3,5})\s+(\d{1,2}\.\d{2})\s+(\d{3,5})\s+(\d{3,5})/m);
+  if (tr) { fuel.trip = { v: +tr[1], time: tr[2] }; model.dist = { gnd: +tr[3], air: +tr[4] }; }
+  const am = text.match(/^\s*ALTN\/([A-Z]{4})\s+(\d{3,5})\s+(\d{1,2}\.\d{2})/m);
+  if (am) { fuel.altn = { v: +am[2], time: am[3] }; model.altnIcao = am[1]; }
+  fr('frsv', /^\s*FINAL RES\s+(\d{3,5})\s+(\d{1,2}\.\d{2})/m);
+  fr('cont', /^\s*5 PCT CONT\s+(\d{3,5})\s+(\d{1,2}\.\d{2})/m);
+  fr('rqrd', /^RQD TAKEOFF\s+(\d{3,5})\s+(\d{1,2}\.\d{2})/m);
+  fr('extra', /^DISC\s+(\d{3,5})\s+(\d{1,2}\.\d{2})/m);
+  fr('tkof', /^PLN TAKEOFF\s+(\d{3,5})\s+(\d{1,2}\.\d{2})/m);
+  const tx = text.match(/^TAXI\s+(\d{3,5})\s*$/m); if (tx) fuel.taxi = { v: +tx[1] };
+  fr('ramp', /^RAMP OUT\s+(\d{3,5})\s+(\d{1,2}\.\d{2})/m);
+  fr('fod', /^FOD\s+(\d{3,5})\s+(\d{1,2}\.\d{2})/m);
+  if (Object.keys(fuel).length) model.fuel = fuel;
+  const w = {};
+  for (const [k, re] of [['tow', /\bTOW\s+0?(\d{4,5})/], ['ldw', /\bLDW\s+0?(\d{4,5})/], ['zfw', /\bZFW\s+0?(\d{4,5})/], ['agtow', /AGTOW\s+0?(\d{4,5})/]]) {
+    const m = text.match(re); if (m) w[k] = +m[1];
+  }
+  if (Object.keys(w).length) model.weights = w;
+
+  const dsp = text.match(/- DISPATCHER:\s*(\S+)/); if (dsp) model.dispatcher = dsp[1];
+  const val = text.match(/PLAN VALID FOR DEPARTURE UNTIL\s+(\d{4}Z \d{2}\/[A-Z]{3}\/\d{2})/); if (val) model.validity = val[1];
+
+  // ALTN 요약: ALTERNATE - 1 RKPC 087 179 0299 280 P000 00.49 5200
+  model.altnSummary = [];
+  for (const m of text.matchAll(/ALTERNATE\s+-\s+\d\s+([A-Z]{4})\s+(\d{3})\s+(\d{3})\s+(\d{3,4})\s+(\d{3})\s+([PM]\d{3})\s+(\d{1,2}\.\d{2})\s+(\d{3,5})/g)) {
+    model.altnSummary.push({ icao: m[1], rwy: '—', dist: +m[4], fl: Math.round(+m[5] / 10) * 10, time: m[7], comp: pm(m[6]), fuel: Math.round(+m[8] / 100), rte: '' });
+  }
+  const altnRte = text.match(/ROUTE TO ALTN\s*:\s*(.+)/); if (altnRte && model.altnSummary[0]) model.altnSummary[0].rte = altnRte[1].trim();
+  model.altnSummary = model.altnSummary.filter((a, i, arr) => arr.findIndex((x) => x.icao === a.icao) === i);
+  if (!model.altnSummary.length) delete model.altnSummary;
+
+  model.navlog = parseCfpNavlog(lines);
+  model.windMatrix = parseCfpMatrix(lines);
+
+  // 계획 FL = 항법로그 숫자 FL의 최빈값
+  const freq = {};
+  model.navlog.forEach((r) => { if (typeof r.fl === 'number') freq[r.fl] = (freq[r.fl] || 0) + 1; });
+  const best = Object.entries(freq).sort((a, b) => b[1] - a[1])[0];
+  if (best) model.plannedFL = +best[0];
+
+  if (fpl) {
+    model.actype = model.actype || fpl.actype;
+    model.altn = fpl.altn?.length ? fpl.altn : (model.altnIcao ? [model.altnIcao] : []);
+    model.route = fpl.route || null;
+    model.eet = fpl.eet || null;
+    model.eetTotal = fpl.eetTotal ? hmToMin(fpl.eetTotal.slice(0, 2) + '.' + fpl.eetTotal.slice(2)) : null;
+  }
+  if (model.date && model.dep?.etd) {
+    const [h, mi] = model.dep.etd.split('.').map(Number);
+    model.etdDate = new Date(model.date.getTime() + (h * 60 + mi) * 60000);
+    if (model.dest?.eta) {
+      const [h2, m2] = model.dest.eta.split('.').map(Number);
+      let eta = new Date(model.date.getTime() + (h2 * 60 + m2) * 60000);
+      if (eta < model.etdDate) eta = new Date(eta.getTime() + 86400000);
+      model.etaDate = eta;
+    }
+  }
+  model.ok = !!(model.depIcao && model.destIcao && model.fuel);
+  return model.ok;
+}
+
 export function parseOFP(raw) {
   const text = raw.replace(/\r/g, '');
   const fpl = parseFplBlock(text);
   const model = { ok: false, src: 'NONE', fpl, warnings: [] };
+
+  // CFP 포맷(FLIGHT RELEASE) 우선 — 실제 브리핑 PDF가 이 양식
+  if (/FLIGHT RELEASE\s+[A-Z]{3}\d/.test(text) && /RQD TAKEOFF/.test(text)) {
+    if (parseCfp(text, fpl, model)) {
+      if (!model.windMatrix) model.warnings.push('noWindMatrix');
+      return model;
+    }
+  }
 
   // ── 헤더 ──
   let head = null;

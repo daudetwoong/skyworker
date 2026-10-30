@@ -116,5 +116,33 @@ ok(fmtHmZ('08.50', 540) === '08:50Z', 'Z 기본 표시', fmtHmZ('08.50', 540));
 ok(fmtTime(new Date('2026-01-01T01:00:00Z'), 540) === '01:00Z', 'fmtTime Z', fmtTime(new Date('2026-01-01T01:00:00Z'), 540));
 ok(fmtDayTime(new Date('2026-01-01T01:00:00Z'), null).includes('01:00Z'), 'fmtDayTime Z');
 
+
+console.log('[cfp] 가공 CFP OFP 파싱 (실 브리핑 PDF 양식)');
+const { OFP_CFP_SAMPLE } = await import('./fixtures/ofp_cfp_sample.js');
+const c = parseOFP(OFP_CFP_SAMPLE);
+ok(c.ok && c.src === 'OZ-CFP', 'CFP 판정', c.src);
+ok(c.fltNo === 'OZ900' && c.depIcao === 'RKSI' && c.destIcao === 'VHHH', 'CFP 편명·구간', `${c.fltNo} ${c.depIcao}-${c.destIcao}`);
+ok(c.reg === 'HL7000' && c.actype === 'A21N', 'CFP 기체(FPL 보강)', `${c.reg} ${c.actype}`);
+ok(c.dep?.etd === '01.00' && c.dest?.eta === '04.40' && c.dest?.tzMin === 480, 'CFP ETD/ETA/도착tz', JSON.stringify(c.dest));
+ok(c.fuel?.trip?.v === 150 && c.fuel?.fod?.v === 112 && c.fuel?.tkof?.v === 292, 'CFP 연료 매핑(TRIP/FOD/PLN TKOF)', JSON.stringify({t:c.fuel?.trip?.v,f:c.fuel?.fod?.v,k:c.fuel?.tkof?.v}));
+ok(c.dist?.gnd === 1150, 'CFP 거리', JSON.stringify(c.dist));
+ok(c.altnSummary?.length === 1 && c.altnSummary[0].icao === 'VMMC' && c.altnSummary[0].rte.includes('SIERA'), 'CFP ALTN 요약+경로', JSON.stringify(c.altnSummary));
+ok(c.plannedFL === 351, 'CFP 계획FL(항법로그 최빈값)', c.plannedFL);
+ok(c.navlog?.length === 6 && c.navlog.find(r=>r.point==='TOD')?.accMin === 138, 'CFP 항법로그 6행·TOD 2:18', `${c.navlog?.length}/${c.navlog?.find(r=>r.point==='TOD')?.accMin}`);
+ok(c.navlog?.find(r=>r.point==='ALPHA')?.comp === -18, 'CFP 행 바람성분 M018', c.navlog?.find(r=>r.point==='ALPHA')?.comp);
+ok(c.windMatrix?.type === 'cfp' && c.windMatrix.levels.length === 5, 'CFP 매트릭스 5레벨', c.windMatrix?.levels);
+ok(c.dispatcher === 'TEST_DISPATCHER' && !!c.validity, 'CFP 디스패처·유효시한', `${c.dispatcher}/${c.validity}`);
+
+console.log('[cfp] FL 트레이드 (성분 직접 합산)');
+const cft = flTrade(c);
+ok(!!cft && cft.levels.length === 5, 'CFP 트레이드 5레벨', cft?.levels?.length);
+if (cft) {
+  const pl = cft.levels.find(x=>x.isPlanned);
+  ok(pl?.fl === 351 && pl?.dMin === 0, 'CFP 계획 레벨 Δ0', JSON.stringify(pl));
+  ok(cft.levels.every(x=>x.avgComp < 0), 'CFP 맞바람 전 레벨 음수', JSON.stringify(cft.levels.map(x=>x.avgComp)));
+  const low = cft.levels.find(x=>x.fl===311);
+  ok(low && low.dMin < 0, 'CFP 낮은 고도가 유리(바람 약함)', low?.dMin);
+}
+
 if (fails) { console.error(`\n${fails}개 실패`); process.exit(1); }
 console.log('\n모든 테스트 통과');
