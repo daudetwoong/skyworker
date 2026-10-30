@@ -53,7 +53,18 @@ function finalize(n) {
   n.fromMs = notamTs(n.from);
   n.toMs = /UFN|PERM|EST/.test(n.to) ? Infinity : notamTs(n.to);
   n.coords = extractCoords(n.etext);
+  n.area = areaOf(n.etext, n.coords);
   delete n.lines;
+}
+
+// 노탐 구역: 좌표 3개 이상=다각형, 반경 표현 있으면 원, 아니면 점
+export function areaOf(etext, coords) {
+  if (!coords.length) return null;
+  const u = String(etext).toUpperCase();
+  const r = u.match(/(\d+(?:\.\d+)?)\s?(NM|KM|M)\b[^.]{0,20}RADIUS/) || u.match(/RADIUS\s+(?:OF\s+)?(\d+(?:\.\d+)?)\s?(NM|KM|M)\b/);
+  if (r) { const v = parseFloat(r[1]); const nm = r[2] === 'KM' ? v / 1.852 : r[2] === 'M' ? v / 1852 : v; return { type: 'circle', center: coords[0], rNm: nm }; } // 반경이 있으면 좌표가 여럿이어도 원
+  if (coords.length >= 3) return { type: 'polygon', pts: coords };
+  return { type: 'point', center: coords[0] };
 }
 
 export function extractCoords(text) {
@@ -173,5 +184,29 @@ export function routeRelation(n, route) {
   if (!n.coords?.length || !route?.length) return null;
   let best = Infinity;
   for (const p of n.coords) for (const w of route) { const d = gcDistNm(p, w); if (d < best) best = d; }
-  return best <= 30 ? 'direct' : best <= 120 ? 'near' : 'far';
+  const pad = n.area?.type === 'circle' ? n.area.rNm : 0;
+  return best <= 30 + pad ? 'direct' : best <= 120 + pad ? 'near' : 'far';
+}
+
+// 회사 공지의 유사 콜사인 목록에서 내 편명과 헷갈릴 만한 것 추출 (숫자 1자리 차이·자리 바꿈)
+export function similarCallsigns(text, myCallsign) {
+  const my = String(myCallsign || '').match(/(\d{2,4})$/)?.[1];
+  if (!my) return [];
+  const idx = String(text).search(/SIMILAR\s+CALL\s*SIGNS?/i);
+  if (idx < 0) return [];
+  const block = String(text).slice(idx, idx + 1500);
+  const found = new Set();
+  for (const m of block.matchAll(/\b([A-Z]{2,3})\s?(\d{2,4})\b/g)) {
+    const n = m[2];
+    if (n === my) continue;
+    const a = my.split('').sort().join(''), b2 = n.split('').sort().join('');
+    let diff = 0; if (n.length === my.length) for (let i = 0; i < n.length; i++) if (n[i] !== my[i]) diff++;
+    if ((n.length === my.length && diff === 1) || a === b2 || my.endsWith(n.slice(-2)) && n.length === my.length) found.add(m[1] + m[2]);
+  }
+  return [...found].slice(0, 8);
+}
+// 좌표 → MCDU 입력형 (3200.0N/11930.0E)
+export function fmsCoord(p) {
+  const f = (v, pos, neg, w) => { const a = Math.abs(v); const d = Math.floor(a); const mm = ((a - d) * 60).toFixed(1).padStart(4, '0'); return `${String(d).padStart(w, '0')}${mm}${v >= 0 ? pos : neg}`; };
+  return `${f(p.lat, 'N', 'S', 2)}/${f(p.lon, 'E', 'W', 3)}`;
 }

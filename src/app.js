@@ -7,7 +7,7 @@ import { sunTimes } from './sun.js';
 import { timePref, toggleTimePref, fmtTime, fmtHmZ, fmtDayTime, tzOffsetMin } from './time.js';
 import { parseOFP } from './ofp.js';
 import { flTrade } from './fltrade.js';
-import { parseNotamPackage, isActive, activeInWindow, headline, literalKo, glossary, scheduleKo, routeRelation, gcDistNm, CAT_KO, KIND_KO } from './notam.js';
+import { parseNotamPackage, isActive, activeInWindow, headline, literalKo, glossary, scheduleKo, routeRelation, gcDistNm, CAT_KO, KIND_KO, similarCallsigns, fmsCoord, extractCoords } from './notam.js';
 import { explainFpl, FIR_KO } from './fpl.js';
 
 const $ = (sel) => document.querySelector(sel);
@@ -66,15 +66,40 @@ function buildModel(rawText) {
   m._fpl = explainFpl(rawText);
   m._route = m._leg.filter((r) => r.lat != null && r.lon != null);
   if (m._notam) {
-    const win = [m.etdDate?.getTime(), m.etaDate?.getTime()];
     m._notam.items.forEach((n) => {
       n.rel = (n.kind === 'FIR' || n.kind === 'ERA') ? routeRelation(n, m._route) : null;
-      if (win[0] && win[1]) {
-        n.act = n.kind === 'DEP' ? isActive(n, win[0]) : (n.kind === 'DEST' || n.kind === 'ALTN') ? isActive(n, win[1]) : activeInWindow(n, win[0], win[1]);
-      } else n.act = true;
+      // 경로 교차 노탐: 가장 가까운 경로점의 누적시간 → 통과 예정 시각 계산용
+      if (n.coords.length && m._route.length) {
+        let bi = 0, bd = Infinity;
+        m._route.forEach((w, i) => { for (const p of n.coords) { const d = gcDistNm(p, w); if (d < bd) { bd = d; bi = i; } } });
+        n.passMin = m._route[bi].accMin ?? null;
+      }
     });
+    m._similar = similarCallsigns(rawText, m.callsign);
   }
+  applyNotamFlags(m);
   return m;
+}
+function flightKey(m) { return `${m.callsign || ''}-${m.date?.toISOString().slice(0, 10) || ''}`; }
+function delayMin(m) { return parseInt(store.get('sw_delay_' + flightKey(m), '0'), 10) || 0; }
+function quickTurn(m) { try { return JSON.parse(store.get('sw_qt_' + flightKey(m), 'null')); } catch { return null; } }
+function hmToDate(base, hhmm) { const mm = String(hhmm || '').match(/^(\d{1,2}):?(\d{2})$/); if (!mm || !base) return null; let d = new Date(Date.UTC(base.getUTCFullYear(), base.getUTCMonth(), base.getUTCDate(), +mm[1], +mm[2])); if (d < base) d = new Date(d.getTime() + 86400000); return d; }
+// 지연·퀵턴 반영한 유효 플래그 (렌더 시마다 재계산)
+function applyNotamFlags(m) {
+  if (!m._notam) return;
+  const dl = delayMin(m) * 60000;
+  const etd = m.etdDate ? m.etdDate.getTime() + dl : null, eta = m.etaDate ? m.etaDate.getTime() + dl : null;
+  const qt = quickTurn(m);
+  const rEtd = qt?.etd && m.etaDate ? hmToDate(new Date(eta), qt.etd)?.getTime() : null;
+  const rEta = qt?.eta && rEtd ? hmToDate(new Date(rEtd), qt.eta)?.getTime() : null;
+  m._win = { etd, eta, rEtd, rEta };
+  m._notam.items.forEach((n) => {
+    if (!etd || !eta) { n.act = true; n.inTime = null; return; }
+    if (n.kind === 'DEP') n.act = isActive(n, etd) || (rEta ? isActive(n, rEta) : false);
+    else if (n.kind === 'DEST' || n.kind === 'ALTN') n.act = isActive(n, eta) || (rEtd ? isActive(n, rEtd) : false);
+    else n.act = activeInWindow(n, etd, eta);
+    if (n.passMin != null) { const pt = etd + n.passMin * 60000; n.passAt = pt; n.inTime = isActive(n, pt - 1800000) || isActive(n, pt + 1800000); }
+  });
 }
 function ensureModel() {
   if (model) return model;
@@ -91,7 +116,7 @@ function apCoords(icao) {
 }
 
 // ── 공항 기상 카드 (공용) ─────────────────────────────────
-function airportCard(icao, { removable = false, roleLabel = null, offsetMin = null } = {}) {
+function airportCard(icao, { removable = false, roleLabel = null, offsetMin = null, winMs = null } = {}) {
   const metar = wxCache.mMap[icao];
   const taf = wxCache.tMap[icao];
   const info = airportInfo(icao, metar);
@@ -145,7 +170,13 @@ function airportCard(icao, { removable = false, roleLabel = null, offsetMin = nu
   tSect.append(el('div', 'sect-title', t('taf')));
   const periods = renderTafPeriods(taf, off);
   if (periods.length) {
-    periods.forEach((p) => { const row = el('div', 'taf-row'); const when = el('div', 'taf-when'); when.append(el('div', 'taf-kind', p.kind), document.createTextNode(`${p.from} → ${p.to}`)); row.append(when, el('div', null, p.text)); tSect.append(row); });
+    periods.forEach((p) => {
+      const hit = winMs && p.fromSec * 1000 <= winMs + 3600000 && p.toSec * 1000 >= winMs - 3600000;
+      const row = el('div', 'taf-row' + (hit ? (p.change ? ' taf-warn' : ' taf-hit') : ''));
+      const when = el('div', 'taf-when'); when.append(el('div', 'taf-kind', p.kind + (hit ? ' ◀' : '')), document.createTextNode(`${p.from} → ${p.to}`));
+      row.append(when, el('div', null, p.text)); tSect.append(row);
+    });
+    if (winMs) tSect.append(el('div', 'sub-line', t('tafWinNote')));
     const rawT = el('div', 'raw', taf.rawTAF); rawT.onclick = () => navigator.clipboard?.writeText(taf.rawTAF).catch(() => {}); tSect.append(rawT);
   } else tSect.append(el('div', 'sub-line', t('noTaf')));
   card.append(tSect);
@@ -159,7 +190,7 @@ function airportCard(icao, { removable = false, roleLabel = null, offsetMin = nu
 }
 
 // ── 카드 프레임 ──────────────────────────────────────────
-const CARD_IDS = ['summary', 'map', 'notam', 'wx', 'sr', 'fltrade', 'timeline', 'fuel', 'fpl', 'altn', 'raw'];
+
 function cardVisible(id) { return store.get('sw_card_' + id, '1') === '1'; }
 function briefCard(id, title, build) {
   if (!cardVisible(id)) return null;
@@ -169,10 +200,13 @@ function briefCard(id, title, build) {
   d.addEventListener('toggle', () => store.set('sw_open_' + id, d.open ? '1' : '0'));
   d.append(el('summary', 'card-sum', title));
   const body = el('div', 'card-body');
+  const help = t('help_' + id);
+  if (help && help !== 'help_' + id) { const h = document.createElement('details'); h.className = 'card-help'; h.append(el('summary', null, t('helpQ')), el('div', 'sub-line', help)); body.append(h); }
   build(body);
   d.append(body);
   return d;
 }
+const CARD_IDS_ALL = ['summary', 'map', 'todo', 'notam', 'wx', 'near', 'sr', 'fltrade', 'timeline', 'fuel', 'fpl', 'altn', 'raw'];
 function kv(body, pairs) {
   const g = el('div', 'kv');
   pairs.forEach(([k, v, cls]) => { if (v != null && v !== '') { const c = el('div', 'kv-item' + (cls ? ' ' + cls : '')); c.append(el('div', 'kv-k', k), el('div', 'kv-v', String(v))); g.append(c); } });
@@ -201,6 +235,7 @@ function summaryCard() {
     }
     b.append(hero);
     if (m.src === 'ICAO-FPL') b.append(el('div', 'note', t('genericNote')));
+    if (m._similar?.length) b.append(el('div', 'note warn-note', `🚨 ${t('similarCs')}: ${m._similar.join(', ')}`));
     kv(b, [
       ['STD', m.dep?.std && m.dep.std !== m.dep.etd ? fmtHmZ(m.dep.std, m.dep.tzMin) : null],
       ['ETD', m.dep?.etd ? fmtHmZ(m.dep.etd, m.dep.tzMin) : null],
@@ -227,6 +262,28 @@ function mapCard() {
     const legend = el('div', 'map-legend');
     [['#5b9cf6', t('legendRoute')], ['#a855f7', t('legendSr')], ['#f59e0b', t('legendFir')], ['#f87171', t('legendNotam')], ['#22b07d', t('legendApt')]].forEach(([c, l]) => { const s = el('span'); const i = el('i'); i.style.background = c; s.append(i, l); legend.append(s); });
     b.append(legend);
+    const ctrl = el('div', 'map-ctrl');
+    const mk = (key, label, def) => { const lab = el('label'); const cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = store.get(key, def) === '1'; cb.onchange = () => { store.set(key, cb.checked ? '1' : '0'); drawMap(); }; lab.append(cb, label); return lab; };
+    ctrl.append(mk('sw_tiles', t('mapTiles'), '0'), mk('sw_follow', t('mapFollow'), '1'));
+    b.append(ctrl);
+    // 흔들림 보고 → 지도
+    const td = document.createElement('details'); td.className = 'paste-alt';
+    td.append(el('summary', null, `🌀 ${t('turbTitle')}`));
+    const ta = el('textarea', 'ofp-input'); ta.style.minHeight = '90px'; ta.placeholder = t('turbHint'); ta.value = store.get('sw_turb_' + flightKey(model), '');
+    const tbtn = el('button', 'chip', t('apply'));
+    tbtn.onclick = () => { store.set('sw_turb_' + flightKey(model), ta.value); turbMarks = parseTurb(ta.value); drawMap(); tInfo.textContent = `${turbMarks.length} ${t('turbMarked')}`; };
+    const tInfo = el('div', 'sub-line');
+    td.append(ta, tbtn, tInfo);
+    b.append(td);
+    turbMarks = parseTurb(ta.value);
+    // ADS-B 기체 위치
+    if (model.reg) {
+      const ar = el('div', 'sect-actions');
+      const ab = el('button', 'btn-sm', `✈️ ${t('whereAc')} (${model.reg})`);
+      const ai = el('div', 'sub-line');
+      ab.onclick = async () => { ai.textContent = '…'; try { await locateAircraft(); ai.textContent = acInfoText(); drawMap(); } catch (e) { ai.textContent = `${t('loadError')}: ${e.message}`; } };
+      ar.append(ab, ai); b.append(ar);
+    }
     // GPS 패널
     const row = el('div', 'sect-actions');
     const btn = el('button', 'btn-sm' + (gpsWatch != null ? ' on' : ''), gpsWatch != null ? t('gpsStop') : t('gpsStart'));
@@ -236,16 +293,51 @@ function mapCard() {
     const msg = el('div', 'sub-line'); msg.id = 'gpsMsg'; b.append(msg);
     const grid = el('div', 'gps-grid'); grid.id = 'gpsGrid'; grid.hidden = !gps; b.append(grid);
     const prog = el('div'); prog.id = 'gpsProg'; b.append(prog);
-    drawMap();
-    renderGpsPanel();
   });
 }
 async function drawMap() {
-  if (!mapHost || !model?._route) return;
+  if (!mapHost || !model?._route || !mapHost.isConnected) return;
   const { renderMap } = await import('./map.js');
-  const apts = [model.depIcao, model.destIcao, ...(model.altn || [])].filter(Boolean).map(apCoords);
-  const notams = (model._notam?.items || []).filter((n) => n.coords.length && n.act && (n.rel === 'direct' || n.rel === 'near')).flatMap((n) => n.coords.slice(0, 1).map((c) => ({ ...c, id: n.id, level: n.rel })));
-  await renderMap(mapHost, { route: model._leg, srRuns: model._srRuns, notams, airports: apts, gps: gps ? { ...gps, trail: gpsTrail } : null, width: mapHost.clientWidth || 380 });
+  const roles = { [model.depIcao]: t('depAp'), [model.destIcao]: t('destAp') };
+  const apts = [model.depIcao, model.destIcao, ...(model.altn || [])].filter(Boolean).map((i) => ({ ...apCoords(i), role: roles[i] || t('altnAp') }));
+  const notams = (model._notam?.items || []).filter((n) => n.area && n.act && (n.rel === 'direct' || n.rel === 'near')).map((n) => ({ id: `${n.icao} ${n.id}`, title: headline(n), text: n.etext, level: n.rel, area: n.area }));
+  await renderMap(mapHost, {
+    route: model._leg, srRuns: model._srRuns, notams, airports: apts, turb: acPos ? [...turbMarks, { lat: acPos.lat, lon: acPos.lon, label: `✈️ ${model.reg}` }] : turbMarks,
+    gps: gps ? { ...gps, trail: gpsTrail } : null,
+    follow: store.get('sw_follow', '1') === '1', tiles: store.get('sw_tiles', '0') === '1',
+    routeKey: `${model.callsign}-${model.depIcao}-${model.destIcao}-${model.date?.toISOString().slice(0, 10)}`,
+  });
+}
+let turbMarks = [];
+let acPos = null;
+function parseTurb(text) {
+  const out = [];
+  const leg = model?._leg || [];
+  String(text || '').split(/\n+/).forEach((line) => {
+    const u = line.toUpperCase().trim(); if (!u) return;
+    const fl = (u.match(/FL\s?(\d{3})/) || [])[1];
+    const sev = (u.match(/\b(SEV|SEVERE|MOD|MODERATE|LGT|LIGHT)\b/) || [])[1] || '';
+    const label = `${sev ? sev + ' ' : ''}${/CAT/.test(u) ? 'CAT ' : ''}${fl ? 'FL' + fl : ''}`.trim() || 'TURB';
+    const cs = extractCoords(u);
+    if (cs.length) { cs.forEach((c) => out.push({ ...c, label })); return; }
+    for (const w of leg) if (w.lat != null && /^[A-Z]{3,5}$/.test(w.point) && new RegExp('\\b' + w.point + '\\b').test(u)) out.push({ lat: w.lat, lon: w.lon, label: `${label} @${w.point}` });
+  });
+  return out;
+}
+async function locateAircraft() {
+  const r = await fetch(`https://api.adsb.lol/v2/reg/${encodeURIComponent(model.reg)}`);
+  if (!r.ok) throw new Error('HTTP ' + r.status);
+  const j = await r.json();
+  const ac = (j.ac || [])[0];
+  if (!ac || ac.lat == null) throw new Error(t('acNotFound'));
+  acPos = { lat: ac.lat, lon: ac.lon, alt: ac.alt_baro, gs: ac.gs, trk: ac.track, flight: (ac.flight || '').trim(), t: Date.now() };
+}
+function acInfoText() {
+  if (!acPos) return '';
+  const dep = apCoords(model.depIcao);
+  const d = dep.lat != null ? gcDistNm(acPos, dep) : null;
+  const eta = d != null && acPos.gs > 60 ? fmtTime(new Date(Date.now() + (d / acPos.gs) * 3600000), model.dep?.tzMin) : null;
+  return `${acPos.flight || model.reg} · ${typeof acPos.alt === 'number' ? acPos.alt.toLocaleString() + 'ft' : acPos.alt || '—'} · GS ${acPos.gs ?? '—'}kt${d != null ? ` · ${model.depIcao} ${t('distTo')} ${Math.round(d)}nm` : ''}${eta ? ` · ETA ${eta}` : ''}`;
 }
 function gpsMsg(txt, cls) { const m = $('#gpsMsg'); if (m) { m.textContent = txt; m.className = cls || 'sub-line'; } }
 function startGps() {
@@ -258,7 +350,7 @@ function startGps() {
     const last = gpsTrail[gpsTrail.length - 1];
     if (!last || Math.abs(last[0] - gps.lat) + Math.abs(last[1] - gps.lon) > 0.01) { gpsTrail.push([gps.lat, gps.lon]); if (gpsTrail.length > 1500) gpsTrail.shift(); }
     gpsMsg(`✅ ${t('gpsOk')} · ±${Math.round(c.accuracy)}m`, 'ok-note');
-    renderGpsPanel(); drawMap();
+    renderGpsPanel(); drawMap(); checkAlerts();
   }, (err) => { gpsMsg(err.code === 1 ? t('gpsDenied') : t('gpsWaiting'), 'err'); if (err.code === 1) stopGps(); }, { enableHighAccuracy: true, maximumAge: 2000, timeout: 30000 });
   render();
 }
@@ -290,12 +382,180 @@ function renderGpsPanel() {
   prog.replaceChildren(el('div', 'note', bits.join('  ·  ')));
 }
 
+// ── 현재 위치: GPS > 수동 선택 지점 ──
+function manualIdx() { const v = store.get('sw_pos_' + flightKey(model), ''); return v === '' ? null : parseInt(v, 10); }
+function curPosition() {
+  if (gps) {
+    let bi = -1, bd = Infinity;
+    model._route.forEach((p, i) => { const d = gcDistNm(gps, p); if (d < bd) { bd = d; bi = i; } });
+    return { lat: gps.lat, lon: gps.lon, idx: bi >= 0 ? model._leg.indexOf(model._route[bi]) : null, src: 'gps', spd: gps.spd, dNm: bd };
+  }
+  const mi = manualIdx();
+  if (mi != null && model._leg[mi]?.lat != null) return { lat: model._leg[mi].lat, lon: model._leg[mi].lon, idx: mi, src: 'manual', spd: null, dNm: 0 };
+  return null;
+}
+function posSelect() {
+  const sel = el('select', 'pos-sel');
+  sel.append(new Option(t('posNone'), ''));
+  model._leg.forEach((r, i) => { if (r.lat != null) sel.append(new Option(`${r.point}${r.accMin != null ? ' · T+' + hmFromMin(r.accMin) : ''}`, String(i))); });
+  sel.value = manualIdx() == null ? '' : String(manualIdx());
+  sel.onchange = () => { store.set('sw_pos_' + flightKey(model), sel.value); render(); };
+  return sel;
+}
+function bearingDeg(a, b) {
+  const r = Math.PI / 180, dl = (b.lon - a.lon) * r;
+  const y = Math.sin(dl) * Math.cos(b.lat * r), x = Math.cos(a.lat * r) * Math.sin(b.lat * r) - Math.sin(a.lat * r) * Math.cos(b.lat * r) * Math.cos(dl);
+  return (Math.atan2(y, x) / r + 360) % 360;
+}
+
+// ── 할 일 타임라인 ──
+const ACTION_RX = /\b(REPORT|REQUEST|ADVISE|MONITOR|SQUAWK|OBTAIN|CONFIRM|SHALL|MUST|REQUIRED TO|PRIOR TO|CONTACT(?!\s+POINT)|CALL(?!\s*SIGN))\b/;
+const NOISE_RX = /\bTEL\s*:|CONTACT POINT|PHONE|E-?MAIL|@|SIMILAR CALL/;
+function todoItems() {
+  const m = model, L = [];
+  const base = m._win?.etd ?? m.etdDate?.getTime();
+  if (!base) return L;
+  const at = (min) => min != null ? base + min * 60000 : null;
+  const leg = m._leg;
+  const idxOf = (name) => leg.findIndex((r) => r.point === name);
+  const toc = leg.find((r) => r.point === 'TOC'), tod = leg.find((r) => r.point === 'TOD');
+  if (toc) L.push({ kind: 'toc', label: t('tlToc'), point: 'TOC', idx: idxOf('TOC'), time: at(toc.accMin) });
+  leg.forEach((r, i) => { if (r.fir) L.push({ kind: 'fir', label: `${t('tlFir')} ${r.fir}${FIR_KO[r.fir] ? '(' + FIR_KO[r.fir] + ')' : ''}`, point: r.point, idx: i, time: at(r.accMin) }); });
+  m._srRuns.forEach((r) => L.push({ kind: 'sr', label: `🌪️ SR${r.max} ${leg[r.s]?.point}→${leg[r.i1]?.point}`, point: leg[r.s]?.point, idx: r.s, time: at(r.t0) }));
+  if (tod) L.push({ kind: 'tod', label: t('tlTod'), point: 'TOD', idx: idxOf('TOD'), time: at(tod.accMin) });
+  // 보고·요청·교신 문장 (DISP REMARK · 회사 공지 · 노탐 코멘트 · 경로 교차 노탐)
+  const sentences = [];
+  (m.remarks || []).forEach((r) => sentences.push({ src: 'DISP', text: r, kind: 'DEP' }));
+  (m._notam?.items || []).forEach((n) => {
+    if (!n.act || n.kind === 'ERA') return;
+    const pick = (txt) => txt.split(/(?<=\.)\s+|\n+/).map((x) => x.trim()).filter((x) => ACTION_RX.test(x.toUpperCase()) && !NOISE_RX.test(x.toUpperCase()));
+    if (n.category === 'COMPANY ADVISORY') pick(n.etext).forEach((x) => sentences.push({ src: `${n.icao} ${n.id}`, text: x, kind: n.kind }));
+    if (n.comment) pick(n.comment).forEach((x) => sentences.push({ src: `${n.icao} ${n.id}`, text: x, kind: n.kind }));
+    if (n.rel === 'direct' && n.inTime) { let ni = leg.findIndex((r) => (r.accMin ?? -1) >= (n.passMin ?? 0)); if (ni < 0) ni = leg.length - 1; L.push({ kind: 'notam', label: `🔴 ${n.icao} ${n.id} ${headline(n)}`, point: leg[ni]?.point, idx: ni, time: n.passAt, sub: n.etext.slice(0, 120) }); }
+  });
+  sentences.forEach((s) => {
+    if (!ACTION_RX.test(s.text.toUpperCase())) return;
+    const u = s.text.toUpperCase();
+    let idx = -1;
+    for (let i = 0; i < leg.length; i++) if (/^[A-Z]{3,5}$/.test(leg[i].point) && new RegExp('\\b' + leg[i].point + '\\b').test(u)) { idx = i; break; }
+    if (idx < 0) { const fm = u.match(/\b([A-Z]{4})\s+FIR\b/); if (fm) idx = leg.findIndex((r) => r.fir === fm[1]); }
+    if (idx < 0) idx = s.kind === 'DEST' || s.kind === 'ALTN' ? leg.length - 1 : 0;
+    L.push({ kind: 'action', label: `📣 ${s.src}`, point: leg[idx]?.point, idx, time: at(leg[idx]?.accMin), sub: s.text.slice(0, 160) });
+  });
+  // 직접 메모
+  userTodos().forEach((u, k) => L.push({ kind: 'note', label: `📝 ${u.text}`, point: leg[u.idx]?.point, idx: u.idx, time: at(leg[u.idx]?.accMin), userKey: k }));
+  return L.filter((x) => x.time != null).sort((x, y) => x.time - y.time);
+}
+function userTodos() { try { return JSON.parse(store.get('sw_todo_' + flightKey(model), '[]')); } catch { return []; } }
+let alerted = new Set();
+function todoCard() {
+  if (!model._leg?.length || !model.etdDate) return null;
+  return briefCard('todo', t('cardTodo'), (b) => {
+    const pos = curPosition();
+    const pr = el('div', 'sect-actions');
+    pr.append(el('span', 'sub-line', `📍 ${t('posBasis')}: ${pos ? (pos.src === 'gps' ? 'GPS' : t('posManual')) : t('posNone')}`), posSelect());
+    b.append(pr);
+    const items = todoItems();
+    const tb = el('table', 'data-table tl-table');
+    let nextMarked = false;
+    items.forEach((it) => {
+      const past = pos && pos.idx != null && it.idx != null && it.idx < pos.idx;
+      const tr = el('tr', past ? 'past' : (!nextMarked ? 'next' : null));
+      if (!past && !nextMarked) nextMarked = true;
+      const lbl = el('td'); lbl.append(el('div', 'ti', it.label)); if (it.sub) lbl.append(el('div', 'sub-line', it.sub));
+      const tm = el('td', 'num'); tm.append(fmtDayTime(new Date(it.time), null)); if (it.point) tm.append(el('div', 'sub-line', it.point));
+      tr.append(lbl, tm);
+      if (it.kind === 'note') { const x = el('button', 'btn-remove', '✕'); x.onclick = () => { const arr = userTodos(); arr.splice(it.userKey, 1); store.set('sw_todo_' + flightKey(model), JSON.stringify(arr)); render(); }; tm.append(x); }
+      tb.append(tr);
+    });
+    b.append(tb);
+    const add = el('div', 'sect-actions');
+    const sel = el('select', 'pos-sel'); model._leg.forEach((r, i) => { if (r.lat != null) sel.append(new Option(r.point, String(i))); });
+    const inp = el('input', 'delay-in'); inp.style.width = '160px'; inp.placeholder = t('todoPlaceholder');
+    const btn = el('button', 'chip', t('todoAdd'));
+    btn.onclick = () => { if (!inp.value.trim()) return; const arr = userTodos(); arr.push({ idx: +sel.value, text: inp.value.trim() }); store.set('sw_todo_' + flightKey(model), JSON.stringify(arr)); render(); };
+    const snd = el('label', 'sub-line'); const cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = store.get('sw_sound', '1') === '1'; cb.onchange = () => store.set('sw_sound', cb.checked ? '1' : '0'); snd.append(cb, ' ' + t('alertSound'));
+    add.append(sel, inp, btn, snd);
+    b.append(add);
+    b.append(el('div', 'note', t('todoNote')));
+  });
+}
+function checkAlerts() {
+  if (!gps || !model?._leg) return;
+  const items = todoItems();
+  for (const it of items) {
+    if (it.idx == null || it.kind === 'toc') continue;
+    const w = model._leg[it.idx]; if (!w || w.lat == null) continue;
+    const d = gcDistNm(gps, w);
+    const key = it.kind + it.idx + (it.label || '');
+    if (d <= 50 && !alerted.has(key)) {
+      alerted.add(key);
+      showBanner(`⏰ 50NM: ${it.label}${it.point ? ' @ ' + it.point : ''}`);
+      if (store.get('sw_sound', '1') === '1') beep();
+    }
+  }
+}
+function beep() { try { const ac = new (window.AudioContext || window.webkitAudioContext)(); const o = ac.createOscillator(); const g = ac.createGain(); o.frequency.value = 880; o.connect(g); g.connect(ac.destination); g.gain.value = 0.2; o.start(); setTimeout(() => { o.stop(); ac.close(); }, 400); } catch {} }
+function showBanner(text) {
+  let bn = $('#swBanner');
+  if (!bn) { bn = el('div', 'banner'); bn.id = 'swBanner'; const ok = el('button', null, 'OK'); ok.onclick = () => { bn.hidden = true; }; bn.append(el('span'), ok); document.body.append(bn); }
+  bn.querySelector('span').textContent = text; bn.hidden = false;
+}
+
+// ── 가까운 공항 ──
+function nearCard() {
+  if (!model._leg?.length) return null;
+  return briefCard('near', t('cardNear'), (b) => {
+    const pos = curPosition();
+    if (!pos) { b.append(el('div', 'note', t('nearNeedPos'))); return; }
+    const cands = new Map();
+    const add = (icao, role) => { if (icao && !cands.has(icao)) cands.set(icao, role); };
+    add(model.destIcao, t('destAp')); (model.altn || []).forEach((x) => add(x, t('altnAp')));
+    (model._notam?.sections || []).filter((s) => s.kind === 'ERA').forEach((s) => add(s.icao, 'ERA'));
+    add(model.depIcao, t('depAp'));
+    const rows = [...cands].map(([icao, role]) => { const c = apCoords(icao); if (c.lat == null) return null; const d = gcDistNm(pos, c); return { icao, role, d, brg: bearingDeg(pos, c), min: pos.spd > 60 ? (d / pos.spd) * 60 : null }; }).filter(Boolean).sort((x, y) => x.d - y.d);
+    if (!rows.length) { b.append(el('div', 'note', t('nearNoCoords'))); return; }
+    const tb = el('table', 'data-table');
+    const th = el('tr'); ['ICAO', '', t('altnDist'), 'BRG', t('altnTime')].forEach((h) => th.append(el('th', null, h))); tb.append(th);
+    rows.slice(0, 10).forEach((r) => { const tr = el('tr'); tr.append(el('td', 'rwy', r.icao), el('td', 'sub-line', r.role), el('td', 'num', Math.round(r.d) + 'nm'), el('td', 'num', String(Math.round(r.brg)).padStart(3, '0') + '°'), el('td', 'num', r.min != null ? hmFromMin(r.min) : '—')); tb.append(tr); });
+    b.append(tb);
+    b.append(el('div', 'sub-line', t('nearNote')));
+  });
+}
+
 // ── NOTAM 브리핑 ──
 let notamTab = 'DEP', notamAll = false;
 function notamCard() {
   const np = model._notam;
   return briefCard('notam', t('cardNotam'), (b) => {
     if (!np) { b.append(el('div', 'note', t('notamNone'))); return; }
+    applyNotamFlags(model);
+    const m = model;
+    if (m._similar?.length) b.append(el('div', 'note warn-note', `🚨 ${t('similarCs')}: ${m._similar.join(', ')}`));
+    // 지연 ETD 조정
+    const dl = delayMin(m);
+    const dRow = el('div', 'sect-actions');
+    dRow.append(el('span', 'sub-line', `⏱ ${t('delayAdj')}${dl ? ` +${dl}${t('min')} → ETD ${fmtTime(new Date(m._win.etd), m.dep?.tzMin)} / ETA ${fmtTime(new Date(m._win.eta), m.dest?.tzMin)}` : ''}`));
+    [15, 30, 60].forEach((v) => { const c = el('button', 'chip', `+${v}`); c.onclick = () => { store.set('sw_delay_' + flightKey(m), String(dl + v)); render(); }; dRow.append(c); });
+    const dIn = el('input', 'delay-in'); dIn.type = 'number'; dIn.placeholder = t('min'); dIn.value = dl || '';
+    dIn.onchange = () => { store.set('sw_delay_' + flightKey(m), String(parseInt(dIn.value, 10) || 0)); render(); };
+    const dReset = el('button', 'chip', t('reset')); dReset.onclick = () => { store.set('sw_delay_' + flightKey(m), '0'); render(); };
+    dRow.append(dIn, dReset);
+    b.append(dRow);
+    // 퀵턴(복편)
+    const qt = quickTurn(m) || {};
+    const qRow = el('div', 'sect-actions');
+    qRow.append(el('span', 'sub-line', `🔄 ${t('quickTurn')}`));
+    const qEtd = el('input', 'delay-in'); qEtd.placeholder = t('qtEtd'); qEtd.value = qt.etd || '';
+    const qEta = el('input', 'delay-in'); qEta.placeholder = t('qtEta'); qEta.value = qt.eta || '';
+    const qSave = el('button', 'chip', t('apply'));
+    qSave.onclick = () => { store.set('sw_qt_' + flightKey(m), JSON.stringify({ etd: qEtd.value.trim(), eta: qEta.value.trim() })); render(); };
+    qRow.append(qEtd, qEta, qSave);
+    b.append(qRow);
+    // ★ 중요 노탐
+    const stars = starSet();
+    const starred = np.items.filter((n) => stars.has(n.icao + n.id));
+    if (starred.length) { b.append(el('div', 'ncat', `★ ${t('starred')} · ${starred.length}`)); starred.forEach((n) => b.append(notamItem(n))); }
     const kinds = ['DEP', 'DEST', 'ALTN', 'ERA', 'FIR'].filter((k) => np.sections.some((s) => s.kind === k));
     if (!kinds.includes(notamTab)) notamTab = kinds[0];
     const tabs = el('div', 'ntabs');
@@ -319,28 +579,37 @@ function notamCard() {
       for (const n of s.items) { if (!notamAll && !n.act) continue; const c = n.category; if (!groups.has(c)) groups.set(c, []); groups.get(c).push(n); }
       for (const [cat, arr] of groups) {
         b.append(el('div', 'ncat', `${CAT_KO[cat] || cat} · ${arr.length}`));
-        arr.sort((x, y) => (y.act - x.act) || (x.rel === 'direct' ? -1 : 0));
+        const rank = (n) => (n.act ? 0 : 4) + (n.rel === 'direct' ? (n.inTime ? 0 : 1) : n.rel === 'near' ? 2 : 3);
+        arr.sort((x, y) => rank(x) - rank(y));
         arr.forEach((n) => b.append(notamItem(n)));
       }
     }
   });
 }
+function starSet() { try { return new Set(JSON.parse(store.get('sw_star', '[]'))); } catch { return new Set(); } }
 function notamItem(n) {
   const d = document.createElement('details');
   d.className = 'nitem' + (n.act ? '' : ' off');
   const s = el('summary');
   const badges = el('div');
   badges.append(el('span', 'nbadge ' + (n.act ? 'act' : 'off'), n.act ? t('notamActive') : t('notamOff')));
-  if (n.rel === 'direct') badges.append(document.createTextNode(' '), el('span', 'nbadge direct', t('notamDirect')));
-  else if (n.rel === 'near') badges.append(document.createTextNode(' '), el('span', 'nbadge near', t('notamNear')));
+  if (n.rel === 'direct') badges.append(document.createTextNode(' '), el('span', 'nbadge direct', n.inTime ? `🔴 ${t('notamDirect')} · ${t('passValid')}` : `🟠 ${t('notamDirect')}`));
+  else if (n.rel === 'near') badges.append(document.createTextNode(' '), el('span', 'nbadge near', `🟡 ${t('notamNear')}`));
+  else if (n.kind === 'FIR' && !n.coords.length) badges.append(document.createTextNode(' '), el('span', 'nbadge off', t('notamNoCoord')));
+  const stars = starSet();
+  const star = el('button', 'star' + (stars.has(n.icao + n.id) ? ' on' : ''), '★');
+  star.onclick = (ev) => { ev.preventDefault(); ev.stopPropagation(); const ss = starSet(); const k = n.icao + n.id; ss.has(k) ? ss.delete(k) : ss.add(k); store.set('sw_star', JSON.stringify([...ss])); render(); };
+  badges.append(document.createTextNode(' '), star);
   s.append(badges, el('span', 'nid', `${n.icao} ${n.id}`));
   s.append(el('div', 'nhead', headline(n)));
   s.append(el('div', 'nsub', n.etext));
   d.append(s);
   const body = el('div', 'nbody');
-  const to = /UFN/.test(n.to) ? '추후 통보 시까지' : /PERM/.test(n.to) ? '영구' : n.toMs ? fmtDayTime(new Date(n.toMs), null) : n.to;
+  const to = /UFN/.test(n.to) ? t('ufn') : /PERM/.test(n.to) ? t('perm') : n.toMs ? fmtDayTime(new Date(n.toMs), null) : n.to;
   body.append(el('div', 'note', `📅 ${t('notamValid')}: ${n.fromMs ? fmtDayTime(new Date(n.fromMs), null) : n.from} ~ ${to}`));
   if (n.schedule) body.append(el('div', 'note', `⏰ ${t('notamSched')}: ${n.schedule} → ${scheduleKo(n.schedule)}`));
+  if (n.passAt) body.append(el('div', 'note', `🛫 ${t('passAt')}: ${fmtDayTime(new Date(n.passAt), null)} — ${n.inTime ? '🔴 ' + t('passValid') : '⚪ ' + t('passInactive')}`));
+  if (n.coords.length) { const fc = el('div', 'note'); fc.append(`🧭 FMS: ${n.coords.slice(0, 6).map(fmsCoord).join('  ')}`); fc.style.cursor = 'pointer'; fc.onclick = () => navigator.clipboard?.writeText(n.coords.map(fmsCoord).join(' ')).catch(() => {}); body.append(fc); }
   if (n.comment) body.append(el('div', 'note warn-note', `💬 ${t('notamComment')}: ${n.comment}`));
   body.append(el('div', 'sect-title', t('notamLit')), el('div', 'nlit', literalKo(n.etext)));
   const gl = glossary(n.etext);
@@ -353,8 +622,10 @@ function notamItem(n) {
 // ── 공항 기상 ──
 function wxCardsWrap() {
   return briefCard('wx', t('cardWx'), (b) => {
-    [[model.depIcao, t('depAp'), model.dep?.tzMin], [model.destIcao, t('destAp'), model.dest?.tzMin], ...(model.altn || []).map((a) => [a, t('altnAp'), null])]
-      .filter(([i]) => i).forEach(([icao, role, off]) => b.append(airportCard(icao, { roleLabel: role, offsetMin: off })));
+    applyNotamFlags(model);
+    const w = model._win || {};
+    [[model.depIcao, t('depAp'), model.dep?.tzMin, w.etd], [model.destIcao, t('destAp'), model.dest?.tzMin, w.eta], ...(model.altn || []).map((a) => [a, t('altnAp'), null, w.eta])]
+      .filter(([i]) => i).forEach(([icao, role, off, win]) => b.append(airportCard(icao, { roleLabel: role, offsetMin: off, winMs: win || null })));
   });
 }
 
@@ -413,14 +684,39 @@ function fuelCard() {
       const tow = w.zfw * 100 + ramp - taxi, ldw = tow - trip, fod = ramp - taxi - trip;
       const minLdg = ((f.altn?.v || 0) + (f.frsv?.v || 0)) * 100;
       kv(out, [
-        [t('estTow'), `${tow.toLocaleString()} lbs${w.agtow ? ` (AGTOW −${(w.agtow * 100 - tow).toLocaleString()})` : ''}`, w.agtow && tow > w.agtow * 100 ? 'bad' : 'good'],
-        [t('estLdw'), `${ldw.toLocaleString()} lbs`],
-        [t('estFod'), `${fod.toLocaleString()} lbs`, fod < minLdg ? 'bad' : 'good'],
-        [t('minLdgFuel'), `${minLdg.toLocaleString()} lbs`],
-        [t('holdMargin'), `${(fod - minLdg).toLocaleString()} lbs`, fod - minLdg < 0 ? 'bad' : 'good'],
+        [t('estTow'), `${tow.toLocaleString()} ${t('lbs')}${w.agtow ? ` (AGTOW −${(w.agtow * 100 - tow).toLocaleString()})` : ''}`, w.agtow && tow > w.agtow * 100 ? 'bad' : 'good'],
+        [t('estLdw'), `${ldw.toLocaleString()} ${t('lbs')}`],
+        [t('estFod'), `${fod.toLocaleString()} ${t('lbs')}`, fod < minLdg ? 'bad' : 'good'],
+        [t('minLdgFuel'), `${minLdg.toLocaleString()} ${t('lbs')}`],
+        [t('holdMargin'), `${(fod - minLdg).toLocaleString()} ${t('lbs')}`, fod - minLdg < 0 ? 'bad' : 'good'],
       ]);
     };
     inp.oninput = recalc; recalc();
+    // 홀딩 가능 시간(F-RSV 유량 역산) + 현재 FOB → 예상 FOD
+    const fm = String(f.frsv?.time || '').match(/(\d{1,2})[.:](\d{2})/);
+    const frsvMin = (fm ? +fm[1] * 60 + +fm[2] : 0) || 30;
+    const rate = f.frsv?.v ? (f.frsv.v * 100) / frsvMin : null; // lbs/min
+    const minLdg = ((f.altn?.v || 0) + (f.frsv?.v || 0)) * 100;
+    const fodPlan = (f.fod?.v || 0) * 100;
+    if (rate) kv(b, [[t('holdRate'), `${Math.round(rate)} ${t('lbs')}/${t('min')}`], [t('holdMin'), fodPlan ? `${Math.max(0, Math.floor((fodPlan - minLdg) / rate))}${t('min')}` : '—', fodPlan - minLdg < 0 ? 'bad' : 'good']]);
+    const pos = curPosition();
+    const fobRow = el('div', 'fuel-in');
+    const fobIn = el('input'); fobIn.type = 'number'; fobIn.placeholder = t('lbs'); fobIn.value = store.get('sw_fob_' + flightKey(model), '');
+    fobRow.append(el('label', null, t('curFob')), fobIn, el('span', 'sub-line', pos ? `${t('posBasis')}: ${model._leg[pos.idx]?.point || '—'}` : t('nearNeedPos')));
+    b.append(fobRow);
+    const fobOut = el('div'); b.append(fobOut);
+    const fobCalc = () => {
+      fobOut.replaceChildren();
+      const fob = parseFloat(fobIn.value); if (!fob) return; store.set('sw_fob_' + flightKey(model), fobIn.value);
+      const trip = (f.trip?.v || 0) * 100;
+      const here = pos && pos.idx != null ? model._leg[pos.idx] : null;
+      const burned = here?.accFuel != null ? here.accFuel * 100 : null;
+      if (burned == null) { fobOut.append(el('div', 'note', t('fobNeedPos'))); return; }
+      const remain = Math.max(0, trip - burned);
+      const fodEst = fob - remain;
+      kv(fobOut, [[t('remainTrip'), `${remain.toLocaleString()} ${t('lbs')}`], [t('estFod'), `${fodEst.toLocaleString()} ${t('lbs')}`, fodEst < minLdg ? 'bad' : 'good'], [t('holdMinEst'), rate ? `${Math.max(0, Math.floor((fodEst - minLdg) / rate))}${t('min')}` : '—', fodEst - minLdg < 0 ? 'bad' : 'good']]);
+    };
+    fobIn.oninput = fobCalc; fobCalc();
     if (model.remarks?.length) { b.append(el('div', 'sect-title', t('dispRemark'))); model.remarks.forEach((r) => b.append(el('div', 'note', r))); }
   });
 }
@@ -503,7 +799,7 @@ function rawCard(rawText) {
 function cardSettingsRow() {
   const row = el('div', 'card-toggles');
   row.append(el('span', 'sect-title', t('cards')));
-  CARD_IDS.forEach((id) => {
+  CARD_IDS_ALL.forEach((id) => {
     const btn = el('button', 'chip' + (cardVisible(id) ? ' chip-on' : ''), t('card' + id[0].toUpperCase() + id.slice(1)).replace(/^\S+\s/, ''));
     btn.onclick = () => { store.set('sw_card_' + id, cardVisible(id) ? '0' : '1'); render(); };
     row.append(btn);
@@ -536,7 +832,7 @@ function flightView(container) {
     const acceptText = (text) => {
       const parsed = parseOFP(text || '');
       if (!parsed.ok) { err.textContent = t('parseFail'); prog.hidden = true; return; }
-      store.set('sw_ofp_text', text); model = null; render(); refreshWx();
+      store.set('sw_ofp_text', text); model = null; import('./map.js').then(({ resetMapView }) => resetMapView()).catch(() => {}); render(); refreshWx();
     };
     const handleFile = async (file) => {
       err.textContent = '';
@@ -573,12 +869,14 @@ function flightView(container) {
   const bPrint = el('button', 'chip', t('printBrief'));
   bPrint.onclick = () => { document.querySelectorAll('details.card').forEach((d) => { d.open = true; }); setTimeout(() => window.print(), 100); };
   const bNew = el('button', 'chip', t('newOfp'));
-  bNew.onclick = () => { store.del('sw_ofp_text'); model = null; stopGps(); render(); };
+  bNew.onclick = () => { store.del('sw_ofp_text'); model = null; stopGps(); import('./map.js').then(({ resetMapView }) => resetMapView()).catch(() => {}); render(); };
   actions.append(bCopy, bPrint, bNew);
   container.append(actions);
-  [summaryCard(), mapCard(), notamCard(), wxCardsWrap(), srCard(), flTradeCard(), timelineCard(), fuelCard(), fplCard(), altnCard(), rawCard(rawText)]
+  [summaryCard(), mapCard(), todoCard(), notamCard(), wxCardsWrap(), nearCard(), srCard(), flTradeCard(), timelineCard(), fuelCard(), fplCard(), altnCard(), rawCard(rawText)]
     .filter(Boolean).forEach((c) => container.append(c));
   container.append(cardSettingsRow());
+  // 지도는 DOM에 붙은 뒤에 초기화해야 크기를 잡는다
+  drawMap().then(renderGpsPanel);
 }
 
 function airportsView(container) {
@@ -594,23 +892,28 @@ function airportsView(container) {
 }
 
 // ── 데이터 로딩/렌더 ──
+// TAF는 비행 공항만(AWC가 많은 ID에 504), METAR는 ERA까지(가까운 공항 좌표용)
 function neededIcaos() {
-  const set = new Set(getList());
+  const primary = new Set(getList());
   const m = ensureModel();
-  if (m?.ok) [m.depIcao, m.destIcao, ...(m.altn || [])].filter(Boolean).forEach((i) => set.add(i));
-  return [...set].slice(0, 20);
+  if (m?.ok) [m.depIcao, m.destIcao, ...(m.altn || [])].filter(Boolean).forEach((i) => primary.add(i));
+  const extra = new Set();
+  if (m?.ok) (m._notam?.sections || []).filter((s) => s.kind === 'ERA').forEach((s) => { if (!primary.has(s.icao)) extra.add(s.icao); });
+  return { taf: [...primary].slice(0, 8), metar: [...primary, ...extra].slice(0, 20) };
 }
 async function refreshWx() {
   const ids = neededIcaos();
-  if (!ids.length) { render(); return; }
-  try {
-    const [metars, tafs] = await Promise.all([fetchWx('metar', ids), fetchWx('taf', ids)]);
-    wxCache = { mMap: {}, tMap: {}, fetchedAt: Date.now(), stale: false };
-    (metars || []).forEach((m) => { wxCache.mMap[m.icaoId] = m; });
-    (tafs || []).forEach((f) => { wxCache.tMap[f.icaoId] = f; });
+  if (!ids.metar.length) { render(); return; }
+  const [mr, tr] = await Promise.allSettled([fetchWx('metar', ids.metar), fetchWx('taf', ids.taf)]);
+  const okAny = mr.status === 'fulfilled' || tr.status === 'fulfilled';
+  if (okAny) {
+    const next = { mMap: { ...wxCache.mMap }, tMap: { ...wxCache.tMap }, fetchedAt: Date.now(), stale: false };
+    if (mr.status === 'fulfilled') (mr.value || []).forEach((m) => { next.mMap[m.icaoId] = m; });
+    if (tr.status === 'fulfilled') (tr.value || []).forEach((f) => { next.tMap[f.icaoId] = f; });
+    wxCache = next;
     store.set('sw_snapshot', JSON.stringify(wxCache));
     $('#offlineNote').hidden = true;
-  } catch {
+  } else {
     try { wxCache = JSON.parse(store.get('sw_snapshot', 'null')) || wxCache; } catch {}
     wxCache.stale = true;
     const note = $('#offlineNote');
@@ -630,6 +933,7 @@ function render() {
   $('#tabFlight').classList.toggle('tab-on', tab === 'flight');
   $('#tabAirports').classList.toggle('tab-on', tab !== 'flight');
   const main = $('#view');
+  if (mapHost?._lmap) import('./map.js').then(({ destroyMap }) => destroyMap(mapHost)).catch(() => {});
   main.replaceChildren();
   mapHost = null;
   if (tab === 'flight') flightView(main); else airportsView(main);
@@ -649,5 +953,12 @@ function initControls() {
   initControls();
   render();
   refreshWx();
-  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('sw.js').then((reg) => {
+      reg.addEventListener('updatefound', () => {
+        const nw = reg.installing; if (!nw) return;
+        nw.addEventListener('statechange', () => { if (nw.state === 'installed' && navigator.serviceWorker.controller) { const bn = el('div', 'update-bar'); const bt = el('button', null, t('reload')); bt.onclick = () => location.reload(); bn.append(t('newVersion'), bt); document.body.prepend(bn); } });
+      });
+    }).catch(() => {});
+  }
 })();

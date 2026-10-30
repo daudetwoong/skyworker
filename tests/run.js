@@ -177,5 +177,31 @@ ok(cfpM.navlog.find(r=>r.point==='ALPHA').sr === 2, 'CFP SR 컬럼', cfpM.navlog
 const apmsM = parseOFP(OFP_SAMPLE);
 ok(apmsM.navlog.find(r=>r.point==='ALPHA')?.sr === 2 && apmsM.navlog.find(r=>r.point==='ALPHA')?.lat != null, 'APMS SR·좌표', JSON.stringify({sr:apmsM.navlog.find(r=>r.point==='ALPHA')?.sr, lat:apmsM.navlog.find(r=>r.point==='ALPHA')?.lat}));
 
+
+console.log('[notam] 구역·FMS·유사 콜사인·누적연료');
+const { fmsCoord, similarCallsigns } = await import('../src/notam.js');
+const npc = parseNotamPackage(OFP_CFP_SAMPLE);
+const firA = npc.items.find(n=>n.id==='A0200/26');
+ok(firA.area?.type === 'circle' && Math.abs(firA.area.rNm - 10) < 0.01, '반경 10NM 원 구역', JSON.stringify(firA.area));
+const polyN = { etext: 'AREA BOUNDED BY 301332N0820722E-361720N0870710E-325212N0915551E', coords: extractCoords('301332N0820722E-361720N0870710E-325212N0915551E') };
+ok(polyN.coords.length === 3, 'DDMMSS 좌표 3개 추출', polyN.coords.length);
+ok(fmsCoord({ lat: 32, lon: 119.5 }) === '3200.0N/11930.0E', 'FMS 좌표 형식', fmsCoord({ lat: 32, lon: 119.5 }));
+ok(fmsCoord({ lat: -33.95, lon: -58.5 }) === '3357.0S/05830.0W', 'FMS 남/서 좌표', fmsCoord({ lat: -33.95, lon: -58.5 }));
+const simTxt = '[ SIMILAR CALL SIGNS]\n- OZ335 AND OZ3355 IN SEOUL APPROACH\n- OZ324 AND OZ342 DURING DEPARTURE';
+ok(similarCallsigns(simTxt, 'AAR324').includes('OZ342'), '유사 콜사인(자리 바꿈) 감지', similarCallsigns(simTxt, 'AAR324'));
+ok(similarCallsigns(simTxt, 'AAR999').length === 0, '해당 없으면 빈 목록');
+const cfpRows = parseOFP(OFP_CFP_SAMPLE).navlog;
+ok(cfpRows.find(r=>r.point==='ALPHA')?.accFuel === 60 && cfpRows.find(r=>r.point==='TOD')?.accFuel === 150, 'CFP 누적연료(ACBO) 파싱', JSON.stringify(cfpRows.map(r=>r.point+':'+r.accFuel)));
+const apmsRows = parseOFP(OFP_SAMPLE).navlog;
+ok(apmsRows.find(r=>r.point==='ALPHA')?.accFuel === 40, 'APMS 누적연료(ACTF) 파싱', apmsRows.find(r=>r.point==='ALPHA')?.accFuel);
+
+
+console.log('[notam] 구역 분류 우선순위');
+const { areaOf } = await import('../src/notam.js');
+const three = [{lat:30,lon:100},{lat:31,lon:101},{lat:32,lon:102}];
+ok(areaOf('WITHIN 10NM RADIUS CENTERED 3000N10000E', three)?.type === 'circle', '반경 있으면 좌표 3개여도 원');
+ok(areaOf('AREA BOUNDED BY', three)?.type === 'polygon', '반경 없고 3좌표면 다각형');
+ok(areaOf('PSN 3000N10000E', three.slice(0,1))?.type === 'point', '좌표 1개면 점');
+
 if (fails) { console.error(`\n${fails}개 실패`); process.exit(1); }
 console.log('\n모든 테스트 통과');

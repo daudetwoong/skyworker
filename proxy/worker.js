@@ -28,7 +28,10 @@ async function relay(kind, ids, origin, ctx) {
     const body = await hit.text();
     return new Response(body, { headers: { 'Content-Type': 'application/json; charset=utf-8', 'X-Cache': 'HIT', ...cors(origin) } });
   }
-  const r = await fetch(upstream, { headers: { 'Accept': 'application/json', 'User-Agent': 'skyworker-wx-proxy/0.1 (personal, non-commercial)' } });
+  let r;
+  try {
+    r = await fetch(upstream, { headers: { 'Accept': 'application/json', 'User-Agent': 'skyworker-wx-proxy/0.2 (personal, non-commercial)' }, signal: AbortSignal.timeout(9000) });
+  } catch (e) { return json({ error: 'upstream timeout' }, 504, origin); }
   if (!r.ok) return json({ error: `upstream HTTP ${r.status}` }, 502, origin);
   const body = await r.text();
   ctx.waitUntil(cache.put(cacheKey, new Response(body, { headers: { 'Cache-Control': `s-maxage=${ttl}` } })));
@@ -41,7 +44,7 @@ export default {
     const origin = req.headers.get('Origin');
     if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors(origin) });
     if (req.method !== 'GET') return json({ error: 'GET only' }, 405, origin);
-    if (url.pathname === '/health') return json({ ok: true, v: '0.1' }, 200, origin);
+    if (url.pathname === '/health') return json({ ok: true, v: '0.2' }, 200, origin);
     const m = url.pathname.match(/^\/wx\/(metar|taf)$/);
     if (m) return relay(m[1], (url.searchParams.get('ids') || '').toUpperCase(), origin, ctx);
     return json({ error: 'not found' }, 404, origin);

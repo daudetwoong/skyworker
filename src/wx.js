@@ -8,10 +8,14 @@ export function proxyBase() {
   try { return localStorage.getItem('ft_proxy') || PROXY_DEFAULT; } catch { return PROXY_DEFAULT; }
 }
 
-export async function fetchWx(kind, ids) {
-  const r = await fetch(`${proxyBase()}/wx/${kind}?ids=${ids.join(',')}`);
-  if (!r.ok) throw new Error(`${kind} HTTP ${r.status}`);
-  return r.json();
+export async function fetchWx(kind, ids, timeoutMs = 12000) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs); // AWC가 느릴 때 METAR가 TAF에 묶이지 않게
+  try {
+    const r = await fetch(`${proxyBase()}/wx/${kind}?ids=${ids.join(',')}`, { signal: ctrl.signal });
+    if (!r.ok) throw new Error(`${kind} HTTP ${r.status}`);
+    return await r.json();
+  } finally { clearTimeout(timer); }
 }
 
 // ── 코드 사전 ──────────────────────────────────────────
@@ -102,6 +106,6 @@ export function renderTafPeriods(taf, offsetMin) {
     if (f.wxString) parts.push(decodeWxString(f.wxString));
     const cl = fmtClouds(f.clouds, null);
     if (cl && !cl.endsWith('—')) parts.push(cl);
-    return { from: fmtDayTime(new Date(f.timeFrom * 1000), offsetMin), to: fmtDayTime(new Date(f.timeTo * 1000), offsetMin), kind, text: parts.join(' · ') || '—' };
+    return { fromSec: f.timeFrom, toSec: f.timeTo, change: f.fcstChange || null, from: fmtDayTime(new Date(f.timeFrom * 1000), offsetMin), to: fmtDayTime(new Date(f.timeTo * 1000), offsetMin), kind, text: parts.join(' · ') || '—' };
   });
 }

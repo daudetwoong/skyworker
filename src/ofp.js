@@ -78,6 +78,7 @@ function parseNavlog(lines) {
       comp: pm(compTok),
       tas,
       accMin: ztTok ? hmToMin(ztTok.split('/')[1]) : null,
+      accFuel: (() => { const f = [...t2].reverse().find((x) => /^\d{1,3}\/\d{3,4}$/.test(x)); return f ? parseInt(f.split('/')[1], 10) : null; })(),
       fir: m1[2].startsWith('-') ? m1[2].slice(1) : null,
     });
   }
@@ -158,6 +159,7 @@ function parseCfpNavlog(lines) {
       gs: gsIdx >= 0 && /^\d{3}$/.test(t2[gsIdx] || '') ? +t2[gsIdx] : null,
       wind, comp, tas,
       accMin: accTok ? hmToMin(accTok) : null,
+      accFuel: (() => { const f = [...t2].reverse().find((x) => /^\d{3,4}\/$/.test(x)); return f ? parseInt(f, 10) : null; })(),
       fir: firM ? firM[1] : null,
     });
     i += 1;

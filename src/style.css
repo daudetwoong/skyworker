@@ -178,3 +178,38 @@ body[data-theme="light"] .frow b { color:#92400e; }
   details.card { break-inside:avoid; border:1px solid #999; }
   details.card > summary.card-sum::after { content:''; }
 }
+
+/* ── Leaflet 지도 (v0.5) ── */
+:root { --map-coast:#5b6f8f; --map-grid:#243147; }
+body[data-theme="light"] { --map-coast:#7a90ad; --map-grid:#d6dfea; }
+.map-host { height:360px; border-radius:12px; overflow:hidden; background:#0b1220; }
+body[data-theme="light"] .map-host { background:#e8f0f8; }
+.leaflet-container { background:transparent; font-family:inherit; }
+.leaflet-control-zoom a { background:var(--card); color:var(--ink); border-color:var(--line); }
+.leaflet-control-attribution { background:rgba(0,0,0,.4); color:#aaa; font-size:9px; }
+.leaflet-popup-content-wrapper { background:var(--card); color:var(--ink); border-radius:10px; font-size:12.5px; }
+.leaflet-popup-tip { background:var(--card); }
+.swmap-pop { color:var(--sub); font-size:11.5px; }
+.swmap-tip { background:transparent; border:none; box-shadow:none; color:#e7edf6; font-size:10px; font-weight:700; text-shadow:0 0 3px #000,0 0 3px #000; padding:0; }
+.swmap-tip.apt { color:#86efac; font-size:11px; }
+body[data-theme="light"] .swmap-tip { color:#1f2937; text-shadow:0 0 3px #fff,0 0 3px #fff; }
+.swmap-tip::before { display:none; }
+.swmap-plane { color:#38bdf8; font-size:20px; line-height:24px; text-align:center; filter:drop-shadow(0 0 3px #000); }
+.swmap-turb { font-size:16px; line-height:20px; text-align:center; }
+.map-ctrl { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-top:8px; }
+.map-ctrl label { font-size:12.5px; color:var(--sub); display:flex; align-items:center; gap:5px; }
+
+.delay-in { width:72px; background:var(--chip); border:1px solid var(--line); color:var(--ink); border-radius:8px; padding:4px 8px; font-size:13px; }
+.star { background:none; border:none; color:var(--sub); font-size:15px; cursor:pointer; padding:0 4px; }
+.star.on { color:#fbbf24; }
+
+.card-help { margin:2px 0 8px; } .card-help > summary { font-size:12px; color:var(--accent); cursor:pointer; list-style:none; } .card-help > summary::before { content:'💡 '; }
+.pos-sel { background:var(--chip); color:var(--ink); border:1px solid var(--line); border-radius:8px; padding:5px 8px; font-size:13px; max-width:200px; }
+.tl-table tr.past { opacity:.45; } .tl-table tr.next td { background:color-mix(in srgb, var(--accent) 14%, transparent); font-weight:700; }
+.tl-table .ti { font-weight:700; }
+.taf-row.taf-hit { background:color-mix(in srgb, var(--accent) 12%, transparent); border-radius:6px; }
+.taf-row.taf-warn { background:#78350f33; border-radius:6px; }
+.banner { position:fixed; left:50%; top:12px; transform:translateX(-50%); z-index:3000; max-width:92vw; background:#7c2d12; color:#fff; border:2px solid #fb923c; border-radius:14px; padding:10px 14px; box-shadow:0 8px 30px rgba(0,0,0,.6); display:flex; gap:10px; align-items:center; font-size:14px; font-weight:700; }
+.banner button { background:#fff; color:#7c2d12; border:0; border-radius:8px; padding:6px 10px; font-weight:800; }
+.update-bar { position:sticky; top:0; z-index:2000; background:var(--accent); color:#fff; padding:8px 14px; font-size:13.5px; font-weight:700; display:flex; gap:10px; align-items:center; justify-content:center; }
+.update-bar button { background:#fff; color:var(--accent); border:0; border-radius:8px; padding:4px 10px; font-weight:800; }
