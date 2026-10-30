@@ -1,8 +1,8 @@
 // 서비스워커 — 앱 셸 캐시(오프라인 구동). 화면 바뀌는 배포마다 CACHE_VERSION을 올릴 것
-const CACHE_VERSION = 'skyworker-v0.3.0';
+const CACHE_VERSION = 'skyworker-v0.4.0';
 const SHELL = [
   './', 'index.html', 'manifest.webmanifest', 'icon-192.png', 'icon-512.png',
-  'src/style.css', 'src/app.js', 'src/i18n.js', 'src/airports.js', 'src/wx.js', 'src/wind.js', 'src/sun.js', 'src/time.js', 'src/ofp.js', 'src/fltrade.js', 'src/pdfread.js', 'vendor/pdf.min.mjs', 'vendor/pdf.worker.min.mjs',
+  'src/style.css', 'src/app.js', 'src/i18n.js', 'src/airports.js', 'src/wx.js', 'src/wind.js', 'src/sun.js', 'src/time.js', 'src/ofp.js', 'src/fltrade.js', 'src/pdfread.js', 'src/notam.js', 'src/fpl.js', 'src/map.js', 'vendor/pdf.min.mjs', 'vendor/pdf.worker.min.mjs', 'vendor/coastline.json',
 ];
 
 self.addEventListener('install', (e) => {

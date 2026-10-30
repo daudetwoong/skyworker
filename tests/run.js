@@ -144,5 +144,38 @@ if (cft) {
   ok(low && low.dMin < 0, 'CFP 낮은 고도가 유리(바람 약함)', low?.dMin);
 }
 
+
+console.log('[notam] 패키지 파싱·해설 (가공 픽스처)');
+const { parseNotamPackage, isActive, activeInWindow, headline, extractCoords, routeRelation } = await import('../src/notam.js');
+const np = parseNotamPackage(OFP_CFP_SAMPLE);
+ok(np && np.items.length === 4, 'NOTAM 4건 파싱', np?.items?.length);
+ok(np.sections.map(s=>s.kind).join(',') === 'DEP,DEST,FIR', '섹션 DEP/DEST/FIR', np.sections.map(s=>s.kind));
+const rw = np.items.find(n=>n.id==='A0001/26');
+ok(rw.category === 'RUNWAY' && rw.schedule === '1800-2200 DAILY' && rw.etext === 'RWY15L/33R CLSD DUE TO MAINT.', 'RUNWAY 항목 필드', JSON.stringify({c:rw.category,s:rw.schedule,e:rw.etext}));
+ok(headline(rw) === '활주로 폐쇄', '헤드라인 활주로 폐쇄', headline(rw));
+ok(isActive(rw, Date.UTC(2026,0,1,1,0)) && !isActive(np.items.find(n=>n.id==='A0002/26'), Date.UTC(2026,0,1,1,0)), 'ETD 기준 유효 판정', '');
+const ils = np.items.find(n=>n.id==='A0100/25');
+ok(ils.toMs === Infinity && headline(ils) === 'ILS 사용 불가', 'UFN=무기한 + ILS 헤드라인', headline(ils));
+const fir = np.items.find(n=>n.id==='A0200/26');
+ok(fir.coords.length === 1 && Math.abs(fir.coords[0].lat - 28) < 0.01 && Math.abs(fir.coords[0].lon - 119.5) < 0.01, 'FIR 노탐 좌표 추출(2800N11930E)', JSON.stringify(fir.coords));
+ok(activeInWindow(fir, Date.UTC(2026,0,1,1,0), Date.UTC(2026,0,1,4,40)), 'PERM 노탐 비행창 유효');
+ok(extractCoords('NEW PSN : 333051.8N1262938.8E').length === 1, 'DDMMSS.s 좌표 추출');
+const rel = routeRelation(fir, [{lat:31,lon:122},{lat:28.2,lon:119.6},{lat:26,lon:118}]);
+ok(rel === 'direct', '경로 교차 판정(direct)', rel);
+
+console.log('[fpl] FPL 풀이');
+const { explainFpl } = await import('../src/fpl.js');
+const fx = explainFpl(OFP_CFP_SAMPLE);
+ok(fx && fx.caps.some(c=>/RVSM 승인/.test(c.text)) && fx.caps.some(c=>/CPDLC J3 J7/.test(c.text)), 'FPL 능력 요약(RVSM·CPDLC)', fx?.caps?.map(c=>c.text).join('|'));
+ok(fx.sections.length >= 7, 'FPL 섹션 7+', fx?.sections?.length);
+
+console.log('[nav] 좌표·SR·FIR 추출');
+const cfpM = parseOFP(OFP_CFP_SAMPLE);
+ok(cfpM.navlog.every(r=>r.lat!=null && r.lon!=null), 'CFP 전 행 좌표');
+ok(Math.abs(cfpM.navlog.find(r=>r.point==='ALPHA').lat - 34) < 0.01 && Math.abs(cfpM.navlog.find(r=>r.point==='ALPHA').lon - 124.5) < 0.01, 'ALPHA 좌표 N34 00.0 E124 30.0');
+ok(cfpM.navlog.find(r=>r.point==='ALPHA').sr === 2, 'CFP SR 컬럼', cfpM.navlog.find(r=>r.point==='ALPHA').sr);
+const apmsM = parseOFP(OFP_SAMPLE);
+ok(apmsM.navlog.find(r=>r.point==='ALPHA')?.sr === 2 && apmsM.navlog.find(r=>r.point==='ALPHA')?.lat != null, 'APMS SR·좌표', JSON.stringify({sr:apmsM.navlog.find(r=>r.point==='ALPHA')?.sr, lat:apmsM.navlog.find(r=>r.point==='ALPHA')?.lat}));
+
 if (fails) { console.error(`\n${fails}개 실패`); process.exit(1); }
 console.log('\n모든 테스트 통과');

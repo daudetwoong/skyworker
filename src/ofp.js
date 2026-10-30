@@ -60,7 +60,14 @@ function parseNavlog(lines) {
       if (after.length) tas = parseInt(after[after.length - 1], 10); // SR(2자리)과 구분: 3자리만, 마지막
     }
     const gsCand = t2.filter((x) => /^\d{3}$/.test(x));
+    const la = lines[i].match(/([NS])(\d{2,3})\s(\d{1,2}\.\d)/);
+    const lo = lines[i + 1].match(/([EW])(\d{2,3})\s(\d{1,2}\.\d)/);
+    let sr = null;
+    if (compTok) { const nx = t1[t1.indexOf(compTok) + 1]; if (/^\d{1,2}$/.test(nx || '')) sr = parseInt(nx, 10); }
     rows.push({
+      lat: la ? (la[1] === 'S' ? -1 : 1) * (parseInt(la[2], 10) + parseFloat(la[3]) / 60) : null,
+      lon: lo ? (lo[1] === 'W' ? -1 : 1) * (parseInt(lo[2], 10) + parseFloat(lo[3]) / 60) : null,
+      sr,
       dist: parseInt(m1[1], 10),
       point: m1[2],
       fl: /^\d{3}$/.test(m1[3]) ? parseInt(m1[3], 10) : m1[3],
@@ -117,32 +124,41 @@ function parseCfpNavlog(lines) {
     const t2 = l2.trim().split(/\s+/);
     // line1: dist N.. ..  MC FL ETO/MSA RF OT WIND SR TAS ZT BO
     const fl = t1[4];
-    let wind = null, comp = null, tas = null;
+    let wind = null, comp = null, tas = null, sr = null;
     for (let k = 5; k < t1.length; k++) {
       const w = t1[k].match(/^(\d{3})(\d{2})([PM])(\d{3})$/);
+      let next = k + 1;
       if (w) { wind = { dir: +w[1] || 360, spd: +w[2] }; comp = (w[3] === 'M' ? -1 : 1) * +w[4]; }
       else if (/^\d{5}$/.test(t1[k]) && /^[+-]?\d{3}$/.test(t1[k + 1] || '') && k > 6) {
-        wind = { dir: +t1[k].slice(0, 3) || 360, spd: +t1[k].slice(3) }; comp = parseInt(t1[k + 1], 10);
+        wind = { dir: +t1[k].slice(0, 3) || 360, spd: +t1[k].slice(3) }; comp = parseInt(t1[k + 1], 10); next = k + 2;
       }
       if (wind) {
-        const after = t1.slice(k + 1).filter((x) => /^\d{3}$/.test(x) && x !== t1[k + 1]);
+        if (/^\d{1,2}$/.test(t1[next] || '')) sr = +t1[next];
+        const after = t1.slice(next).filter((x) => /^\d{3}$/.test(x));
         if (after.length) tas = +after[0] >= 250 ? +after[0] : (+after[1] >= 250 ? +after[1] : null);
         break;
       }
     }
+    const la = l1.match(/([NS])(\d{2})\s(\d{1,2}\.\d)/);
+    const lo = l2.match(/([EW])(\d{2,3})\s(\d{1,2}\.\d)/);
+    const firM = (lines[i + 2] || '').match(/^\s*\/\s*([A-Z]{4})\s+FIR/);
     const accTok = [...t2].reverse().find((x) => /^\d{2}\.\d{2}$/.test(x));
     const gsIdx = accTok ? t2.indexOf(accTok) - 1 : -1;
     const l3 = (lines[i + 2] || '').trim().split(/\s+/);
+    const tcTok = firM ? (l3.find((x, ix) => ix > 2 && /^\d{3}$/.test(x)) || null) : l3[0];
     rows.push({
+      lat: la ? (la[1] === 'S' ? -1 : 1) * (+la[2] + parseFloat(la[3]) / 60) : null,
+      lon: lo ? (lo[1] === 'W' ? -1 : 1) * (+lo[2] + parseFloat(lo[3]) / 60) : null,
+      sr,
       dist: +t1[0],
       point: m2[1],
       fl: /^\d{3}$/.test(fl) ? +fl : fl,
       mc: +t1[3] || null,
-      tc: /^\d{3}$/.test(l3[0] || '') ? +l3[0] : null,
+      tc: /^\d{3}$/.test(tcTok || '') ? +tcTok : null,
       gs: gsIdx >= 0 && /^\d{3}$/.test(t2[gsIdx] || '') ? +t2[gsIdx] : null,
       wind, comp, tas,
       accMin: accTok ? hmToMin(accTok) : null,
-      fir: null,
+      fir: firM ? firM[1] : null,
     });
     i += 1;
   }
