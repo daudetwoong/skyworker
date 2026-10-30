@@ -1,5 +1,6 @@
 // AWC JSON(METAR/TAF)을 한국어 문장으로 렌더링 — 사전에 없는 코드는 창작하지 않고 원문 유지
 import { t } from './i18n.js';
+import { fmtDayTime, fmtTime } from './time.js';
 
 export const PROXY_DEFAULT = 'https://skyworker-wx.daudet0127.workers.dev';
 
@@ -81,13 +82,12 @@ export function renderMetarLines(m) {
 }
 
 // ── TAF ────────────────────────────────────────────────
-const KST = 9 * 3600 * 1000;
-export function fmtKst(unixSec) {
-  const d = new Date(unixSec * 1000 + KST);
-  return `${String(d.getUTCDate()).padStart(2, '0')}일 ${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}`;
+export function obsTimeStr(m, offsetMin) {
+  if (!m?.reportTime) return null;
+  return fmtTime(new Date(m.reportTime + (m.reportTime.endsWith('Z') ? '' : 'Z')), offsetMin);
 }
 
-export function renderTafPeriods(taf) {
+export function renderTafPeriods(taf, offsetMin) {
   if (!taf || !taf.fcsts) return [];
   return taf.fcsts.map((f) => {
     let kind = t('initial');
@@ -102,6 +102,6 @@ export function renderTafPeriods(taf) {
     if (f.wxString) parts.push(decodeWxString(f.wxString));
     const cl = fmtClouds(f.clouds, null);
     if (cl && !cl.endsWith('—')) parts.push(cl);
-    return { from: fmtKst(f.timeFrom), to: fmtKst(f.timeTo), kind, text: parts.join(' · ') || '—' };
+    return { from: fmtDayTime(new Date(f.timeFrom * 1000), offsetMin), to: fmtDayTime(new Date(f.timeTo * 1000), offsetMin), kind, text: parts.join(' · ') || '—' };
   });
 }

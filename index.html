@@ -1,11 +1,11 @@
 <!DOCTYPE html>
-<!-- SkyWorker 공항 허브 — 빌드 없는 정적 PWA 셸 -->
+<!-- SkyWorker — 오늘 내 비행 브리핑 PWA (빌드 없는 정적 셸) -->
 <html lang="ko">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#10151d">
-<title>SkyWorker — 공항 허브</title>
+<title>SkyWorker — 내 비행</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="stylesheet" href="src/style.css">
 </head>
@@ -13,25 +13,24 @@
 <header>
   <div class="brand">
     <span class="logo">✈︎</span>
-    <div><h1 id="appTitle">공항 허브</h1><div class="tagline"><b>SkyWorker</b> · <span id="tagline"></span></div></div>
+    <div><h1 id="appTitle">SkyWorker</h1><div class="tagline" id="tagline"></div></div>
   </div>
   <div class="header-actions">
+    <button id="btnTime" class="icon-btn txt" title="UTC/Local">Z</button>
     <button id="btnRefresh" class="icon-btn" title="refresh">↻</button>
     <button id="btnTheme" class="icon-btn" title="theme">☀️</button>
     <button id="btnLang" class="icon-btn txt" title="language">EN</button>
   </div>
 </header>
-
+<nav class="tabs">
+  <button id="tabFlight" class="tab tab-on">내 비행</button>
+  <button id="tabAirports" class="tab">공항</button>
+</nav>
 <main>
   <div id="offlineNote" class="offline-note" hidden></div>
-  <div id="cards" class="cards"></div>
-  <form id="addForm" class="add-form" autocomplete="off">
-    <input id="addInput" maxlength="4" placeholder="ICAO (예: RJTT)" spellcheck="false">
-    <button type="submit" id="addBtn">추가</button>
-  </form>
+  <div id="view"></div>
   <p class="disclaimer" id="disclaimer"></p>
 </main>
-
 <script type="module" src="src/app.js"></script>
 </body>
 </html>

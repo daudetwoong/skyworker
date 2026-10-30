@@ -54,5 +54,47 @@ if (s) {
   ok(dayLenH > 8 && dayLenH < 16, `낮 길이 상식 범위 (${dayLenH.toFixed(1)}h)`);
 }
 
+// ── OFP 파서 + FL 트레이드 (가공 픽스처) ──
+const { parseOFP } = await import('../src/ofp.js');
+const { flTrade } = await import('../src/fltrade.js');
+const { OFP_SAMPLE } = await import('./fixtures/ofp_sample.js');
+
+console.log('[ofp] 가공 OZ OFP 파싱');
+const m = parseOFP(OFP_SAMPLE);
+ok(m.ok && m.src === 'OZ-APMS', '파싱 성공 + OZ 판정', m.src);
+ok(m.fltNo === 'OZ998' && m.depIcao === 'RKSI' && m.destIcao === 'VHHH', '편명·구간', `${m.fltNo} ${m.depIcao}-${m.destIcao}`);
+ok(m.reg === 'HL7000' && m.actype === 'A321-251NX', '기체·기종', `${m.reg} ${m.actype}`);
+ok(m.dep?.tzMin === 540 && m.dest?.tzMin === 480, '공항 로컬 오프셋', `${m.dep?.tzMin}/${m.dest?.tzMin}`);
+ok(m.dep?.etd === '01.00' && m.dest?.eta === '04.40', 'ETD/ETA', `${m.dep?.etd}/${m.dest?.eta}`);
+ok(m.fuel?.trip?.v === 150 && m.fuel?.extra?.extra === 'TFC', '연료 TRIP/EXTRA RSN', JSON.stringify(m.fuel?.extra));
+ok(m.remarks?.[0]?.includes('VHHH TFC'), 'DISP REMARK', m.remarks);
+ok(m.altnSummary?.length === 2 && m.altnSummary[0].icao === 'VMMC', 'ALTN SUMMARY 2행', JSON.stringify(m.altnSummary?.map(a=>a.icao)));
+ok(m.altn?.includes('VMMC') && m.altn?.includes('VHHX'), 'FPL 교체공항 2개', m.altn);
+ok(m.plannedFL === 351, '계획 FL(FPL 마지막 레벨)', m.plannedFL);
+ok(m.navlog?.length === 5, '항법로그 5행(TOC~TOD)', m.navlog?.length);
+ok(m.navlog?.find(r=>r.point==='TOD')?.accMin === 102, 'TOD 누적시간 1:42', m.navlog?.find(r=>r.point==='TOD')?.accMin);
+ok(m.windMatrix?.levels?.length === 6 && m.windMatrix?.rows?.length === 5, '바람 매트릭스 6레벨×5행', `${m.windMatrix?.levels?.length}/${m.windMatrix?.rows?.length}`);
+ok(m.eet?.[0]?.fir === 'VHHK' && m.eet?.[0]?.min === 58, 'EET FIR', JSON.stringify(m.eet));
+ok(m.etdDate?.toISOString() === '2026-01-01T01:00:00.000Z', 'ETD Date 합성', m.etdDate?.toISOString());
+
+console.log('[fltrade] 고도별 ETA 비교');
+const ft = flTrade(m);
+ok(!!ft, '계산 성공');
+if (ft) {
+  ok(ft.levels.length === 6, '6개 레벨', ft.levels.length);
+  const planned = ft.levels.find((x) => x.isPlanned);
+  ok(planned && planned.fl === 350 && planned.dMin === 0, '계획 레벨 Δ=0 (FL351→매트릭스 35000)', JSON.stringify(planned));
+  ok(ft.levels.every((x) => x.avgComp < 0), '맞바람 노선: 전 레벨 역풍', JSON.stringify(ft.levels.map(x=>x.avgComp)));
+  ok(ft.mach > 0.70 && ft.mach < 0.85, '마하 상식 범위', ft.mach);
+  const span = Math.max(...ft.levels.map(x=>Math.abs(x.dMin)));
+  ok(span < 30, 'Δ시간 상식 범위(<30분)', span);
+}
+
+console.log('[ofp] 범용 폴백 (FPL 블록만)');
+const g = parseOFP('(FPL-ABC123-IS\n-B738/M-SDE2E3/LB1\n-RJTT0200\n-N0450F370 OLMEN Y51 SOMAR\n-RKSI0210 RKSS\n-PBN/A1B1 DOF/260101\n REG/HL8000)');
+ok(g.ok && g.src === 'ICAO-FPL', '폴백 판정', g.src);
+ok(g.depIcao === 'RJTT' && g.destIcao === 'RKSI' && g.altn[0] === 'RKSS', '폴백 구간/교체', `${g.depIcao}-${g.destIcao}/${g.altn}`);
+ok(g.plannedFL === 370, '폴백 계획FL', g.plannedFL);
+
 if (fails) { console.error(`\n${fails}개 실패`); process.exit(1); }
 console.log('\n모든 테스트 통과');
