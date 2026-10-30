@@ -17,7 +17,7 @@
 - [x] node 로직 테스트 (tests/run.js)
 - [ ] 앱 아이콘 (PNG 192/512 — 손그림 무드, 이름 확정 후)
 - [x] 이름 확정(SkyWorker) → 폴더·Worker 개명
-- [ ] GitHub 저장소 생성 + Pages 배포 + Worker ALLOW_ORIGINS에 실주소 추가
+- [x] GitHub 저장소 생성 + Pages 배포 (daudetwoong.github.io/skyworker) + CORS 확인
 - [ ] 형님 실기기(아이패드/폰) 테스트
 
 ## Phase 2 — 비행 도구 (다음)
