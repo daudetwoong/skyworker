@@ -1,0 +1,5 @@
+# ft-wx-proxy 배포 설정 (프로젝트 이름 확정 시 개명)
+name = "ft-wx-proxy"
+main = "worker.js"
+compatibility_date = "2026-10-01"
+workers_dev = true
