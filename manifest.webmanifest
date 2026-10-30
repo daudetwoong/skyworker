@@ -1,0 +1,10 @@
+{
+  "name": "공항 허브 — FlightTool",
+  "short_name": "공항허브",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#10151d",
+  "theme_color": "#10151d",
+  "description": "조종사용 공항 실황·예보·활주로 바람 허브 (참고용)",
+  "icons": []
+}

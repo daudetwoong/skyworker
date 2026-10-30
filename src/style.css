@@ -1,0 +1,50 @@
+/* 공항 허브 스타일 — 다크(콕핏) 기본 + 라이트, 시스템폰트 */
+:root {
+  --bg:#10151d; --card:#1a2230; --line:#2b3648; --ink:#e7edf6; --sub:#8fa0b8;
+  --accent:#5b9cf6; --good:#22b07d; --bad:#e4564a; --chip:#232e42;
+}
+body[data-theme="light"] {
+  --bg:#f7f6f2; --card:#ffffff; --line:#e3ded4; --ink:#28323f; --sub:#71808f;
+  --accent:#1a56db; --good:#15803d; --bad:#c22f23; --chip:#f0ede6;
+}
+* { box-sizing:border-box; }
+body { margin:0; background:var(--bg); color:var(--ink); font-family:-apple-system,BlinkMacSystemFont,'Apple SD Gothic Neo','Noto Sans KR',sans-serif; font-size:15px; line-height:1.6; }
+header { display:flex; align-items:center; justify-content:space-between; padding:14px 18px 10px; max-width:760px; margin:0 auto; }
+.brand { display:flex; gap:10px; align-items:center; }
+.logo { font-size:26px; }
+h1 { font-size:19px; margin:0; }
+.tagline { font-size:12px; color:var(--sub); }
+.header-actions { display:flex; gap:8px; }
+.icon-btn { background:var(--chip); color:var(--ink); border:1px solid var(--line); border-radius:10px; width:38px; height:38px; font-size:16px; cursor:pointer; }
+.icon-btn.txt { font-size:12.5px; font-weight:700; width:auto; padding:0 10px; }
+main { max-width:760px; margin:0 auto; padding:4px 16px 60px; }
+.offline-note { background:#7c5a1433; border:1px solid #a97d2a66; color:#d8b161; border-radius:10px; padding:8px 14px; font-size:13px; margin:8px 0; }
+.cards { display:flex; flex-direction:column; gap:14px; }
+.card { background:var(--card); border:1px solid var(--line); border-radius:16px; padding:16px 18px; }
+.card-head { display:flex; align-items:center; gap:10px; margin-bottom:8px; }
+.card-head .icao { font-weight:800; font-size:17px; letter-spacing:.5px; }
+.card-head .apt-name { color:var(--sub); font-size:13px; }
+.fltcat { margin-left:auto; font-size:11.5px; font-weight:700; padding:2px 10px; border-radius:99px; color:#fff; }
+.btn-remove { background:none; border:none; color:var(--sub); font-size:15px; cursor:pointer; padding:2px 4px; }
+.sect { margin:10px 0 2px; }
+.sect-title { font-size:11.5px; font-weight:700; color:var(--sub); letter-spacing:.8px; margin-bottom:4px; text-transform:uppercase; }
+.raw { font-family:ui-monospace,Menlo,monospace; font-size:12px; color:var(--sub); background:var(--chip); border-radius:8px; padding:6px 10px; margin:6px 0; word-break:break-all; cursor:pointer; }
+.lines div { font-size:14px; }
+.taf-row { display:grid; grid-template-columns:132px 1fr; gap:8px; font-size:13.5px; padding:3px 0; border-top:1px dashed var(--line); }
+.taf-row:first-child { border-top:none; }
+.taf-when { color:var(--sub); font-size:12.5px; }
+.taf-kind { font-weight:700; font-size:12px; color:var(--accent); }
+.rwy-table { width:100%; border-collapse:collapse; font-size:13.5px; margin-top:4px; }
+.rwy-table td { padding:3px 8px 3px 0; }
+.rwy-table .rwy { font-weight:700; font-family:ui-monospace,Menlo,monospace; }
+.hw { color:var(--good); } .tw { color:var(--bad); font-weight:700; }
+.sun-line { font-size:13.5px; color:var(--sub); }
+.add-form { display:flex; gap:8px; margin:20px 0 8px; }
+.add-form input { flex:1; background:var(--card); border:1px solid var(--line); color:var(--ink); border-radius:12px; padding:10px 14px; font-size:15px; text-transform:uppercase; }
+.add-form button { background:var(--accent); color:#fff; border:none; border-radius:12px; padding:0 20px; font-weight:700; cursor:pointer; }
+.rwy-input { display:flex; gap:6px; margin-top:4px; }
+.rwy-input input { flex:1; background:var(--chip); border:1px solid var(--line); color:var(--ink); border-radius:8px; padding:5px 10px; font-size:13px; }
+.rwy-input button { background:var(--chip); border:1px solid var(--line); color:var(--ink); border-radius:8px; padding:0 12px; font-size:12.5px; cursor:pointer; }
+.disclaimer { font-size:12px; color:var(--sub); text-align:center; margin-top:22px; }
+.updated { font-size:11.5px; color:var(--sub); margin-left:auto; }
+.err { color:var(--bad); font-size:13px; }
