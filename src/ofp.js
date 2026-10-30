@@ -5,24 +5,36 @@ function hmToMin(hm) { const m = String(hm || '').match(/(\d{1,2})[.:](\d{2})/);
 function pm(v) { if (!v) return null; const s = v[0] === 'M' ? -1 : 1; return s * parseInt(v.slice(1), 10); }
 
 function parseFplBlock(text) {
-  const m = text.match(/\(FPL-([A-Z]{2,3}\d{1,4})-[A-Z]{2}\s*\n?([\s\S]*?)\)/);
-  if (!m) return null;
-  const body = m[2];
-  const out = { callsign: m[1] };
-  const dep = body.match(/^-([A-Z]{4})(\d{4})$/m) || body.match(/-([A-Z]{4})(\d{4})\n/);
-  if (dep) { out.dep = dep[1]; out.eobt = dep[2]; }
+  // 중첩 괄호(STS/..., RMK(...) 등) 대응: 균형 스캔으로 블록 경계 탐지
+  const start = text.search(/\(FPL-[A-Z]{2,3}\d{1,4}-[A-Z]{2}/);
+  if (start < 0) return null;
+  let depth = 0, end = -1;
+  for (let i = start; i < text.length && i < start + 4000; i++) {
+    if (text[i] === '(') depth++;
+    else if (text[i] === ')') { depth--; if (depth === 0) { end = i; break; } }
+  }
+  if (end < 0) return null;
+  const block = text.slice(start, end + 1);
+  const cs = block.match(/^\(FPL-([A-Z]{2,3}\d{1,4})-/);
+  const body = block.slice(block.indexOf('\n') + 1 || 5, -1);
+  const out = { callsign: cs[1] };
+  // 출발/목적지 줄은 같은 꼴(-ICAO+4자리) — 첫 매치=출발, 마지막 매치=목적지(+교체들)
+  const legLines = [...body.matchAll(/^-([A-Z]{4})(\d{4})((?:\s+[A-Z]{4})*)\s*$/gm)];
+  if (legLines.length) { out.dep = legLines[0][1]; out.eobt = legLines[0][2]; }
   const typ = body.match(/^-([A-Z0-9]{2,4})\/[HML]-/m);
   if (typ) out.actype = typ[1];
-  // 목적지/EET/교체: "-RKSI0130 RKSS" 꼴
-  const dst = body.match(/^-([A-Z]{4})(\d{4})\s+([A-Z]{4})(?:\s+([A-Z]{4}))?/m);
-  if (dst) { out.dest = dst[1]; out.eetTotal = dst[2]; out.altn = [dst[3], dst[4]].filter(Boolean); }
-  // 순항 속도/고도 (마지막 변경치 우선): N0451F310, K0844S0950
-  const lvls = [...body.matchAll(/[NMK](\d{4})([FS])(\d{3,4})/g)];
+  if (legLines.length >= 2) {
+    const dst = legLines[legLines.length - 1];
+    out.dest = dst[1]; out.eetTotal = dst[2];
+    out.altn = dst[3].trim().split(/\s+/).filter((x) => /^[A-Z]{4}$/.test(x));
+  }
+  // 순항 속도/고도 (마지막 변경치 우선): N0451F310, M082F350, K0844S0950
+  const lvls = [...body.matchAll(/(?:[NK]\d{4}|M\d{3})([FS])(\d{3,4})/g)];
   if (lvls.length) {
     const last = lvls[lvls.length - 1];
-    out.plannedFL = last[2] === 'F' ? parseInt(last[3], 10) : Math.round(parseInt(last[3], 10) * 10 * 3.28084 / 100);
+    out.plannedFL = last[1] === 'F' ? parseInt(last[2], 10) : Math.round(parseInt(last[2], 10) * 10 * 3.28084 / 100);
   }
-  const route = body.match(/-[KMN]\d{4}[FS]\d{3,4}\s+([\s\S]*?)\n-[A-Z]{4}\d{4}/);
+  const route = body.match(/-(?:[NK]\d{4}|M\d{3})[FS]\d{3,4}\s+([\s\S]*?)\n-[A-Z]{4}\d{4}/);
   if (route) out.route = route[1].replace(/\s+/g, ' ').trim();
   const eet = body.match(/EET\/((?:[A-Z]{4}\d{4}\s*)+)/);
   if (eet) out.eet = [...eet[1].matchAll(/([A-Z]{4})(\d{2})(\d{2})/g)].map((x) => ({ fir: x[1], min: parseInt(x[2], 10) * 60 + parseInt(x[3], 10) }));

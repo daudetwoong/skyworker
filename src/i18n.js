@@ -52,6 +52,11 @@ const DICT = {
     altnRwy: '활주로', altnDist: '거리', altnFl: '고도', altnTime: '시간', altnFuel: '연료', altnRte: '경로',
     rawHint: '원문이 항상 기준입니다.',
     cards: '카드 표시',
+    min: '분',
+    daySfx: '일',
+    ofpPlaceholder: '여기에 OFP 전체 텍스트 붙여넣기',
+    rwyPlaceholder: '15,33',
+    lbs: 'lbs',
   },
   en: {
     appTitle: 'SkyWorker', tagline: "Today's flight at a glance",
@@ -92,6 +97,11 @@ const DICT = {
     altnRwy: 'RWY', altnDist: 'Dist', altnFl: 'FL', altnTime: 'Time', altnFuel: 'Fuel', altnRte: 'Route',
     rawHint: 'The raw OFP is always authoritative.',
     cards: 'Cards',
+    min: 'min',
+    daySfx: '',
+    ofpPlaceholder: 'Paste full OFP text here',
+    rwyPlaceholder: '15,33',
+    lbs: 'lbs',
   },
 };
 

@@ -20,7 +20,7 @@ function el(tag, cls, text) {
   if (text != null) e.textContent = text;
   return e;
 }
-const p100lbs = (v) => v == null ? '—' : (v * 100).toLocaleString() + ' lbs';
+const p100lbs = (v) => v == null ? '—' : (v * 100).toLocaleString() + ' ' + t('lbs');
 const hm = (s) => s ? s.replace('.', ':') : '—';
 
 let model = null;       // 파싱된 OFP
@@ -61,7 +61,7 @@ function airportCard(icao, { removable = false, roleLabel = null, offsetMin = nu
   renderMetarLines(metar).forEach((l) => lines.append(el('div', null, l)));
   mSect.append(lines);
   const raw = el('div', 'raw', metar.rawOb);
-  raw.onclick = () => navigator.clipboard?.writeText(metar.rawOb);
+  raw.onclick = () => navigator.clipboard?.writeText(metar.rawOb).catch(() => {});
   mSect.append(raw);
   card.append(mSect);
 
@@ -83,7 +83,7 @@ function airportCard(icao, { removable = false, roleLabel = null, offsetMin = nu
   } else {
     wSect.append(el('div', 'sub-line', t('noRunwayData')));
     const form = el('div', 'rwy-input');
-    const inp = el('input'); inp.placeholder = '15,33';
+    const inp = el('input'); inp.placeholder = t('rwyPlaceholder');
     const btn = el('button', null, t('saveRunways'));
     btn.onclick = () => {
       const rwys = inp.value.split(',').map((s) => s.trim().toUpperCase()).filter((s) => /^\d{2}[LRC]?$/.test(s));
@@ -106,7 +106,7 @@ function airportCard(icao, { removable = false, roleLabel = null, offsetMin = nu
       tSect.append(row);
     });
     const rawT = el('div', 'raw', taf.rawTAF);
-    rawT.onclick = () => navigator.clipboard?.writeText(taf.rawTAF);
+    rawT.onclick = () => navigator.clipboard?.writeText(taf.rawTAF).catch(() => {});
     tSect.append(rawT);
   } else tSect.append(el('div', 'sub-line', t('noTaf')));
   card.append(tSect);
@@ -226,7 +226,7 @@ function flTradeCard() {
       const eta = model.etaDate ? fmtTime(new Date(model.etaDate.getTime() + l.dMin * 60000), model.dest?.tzMin) : '—';
       tr.append(
         el('td', null, 'FL' + l.fl + (l.isPlanned ? ` ◀ ${t('planned')}` : '')),
-        el('td', 'num ' + (l.dMin > 0 ? 'tw' : l.dMin < 0 ? 'hw' : ''), (l.dMin >= 0 ? '+' : '') + l.dMin + '분'),
+        el('td', 'num ' + (l.dMin > 0 ? 'tw' : l.dMin < 0 ? 'hw' : ''), (l.dMin >= 0 ? '+' : '') + l.dMin + t('min')),
         el('td', 'num', eta),
         el('td', 'num', (l.avgComp >= 0 ? '+' : '') + l.avgComp + 'kt'),
         el('td', 'num', l.avgTemp + '°C'),
@@ -313,7 +313,7 @@ function flightView(container) {
     box.append(el('h2', null, t('pasteTitle')));
     box.append(el('p', 'sub-line', t('pasteHint')));
     const ta = el('textarea', 'ofp-input');
-    ta.placeholder = 'OFP ...';
+    ta.placeholder = t('ofpPlaceholder');
     const btn = el('button', 'primary', t('buildBrief'));
     const err = el('div', 'err');
     btn.onclick = () => {
@@ -358,11 +358,9 @@ function airportsView(container) {
 // ── 데이터 로딩/렌더 ──────────────────────────────────────
 function neededIcaos() {
   const set = new Set(getList());
+  const rawText = store.get('sw_ofp_text', '');
+  if (!model && rawText) { model = parseOFP(rawText); model._flTrade = flTrade(model); }
   if (model?.ok) [model.depIcao, model.destIcao, ...(model.altn || [])].filter(Boolean).forEach((i) => set.add(i));
-  else {
-    const rawText = store.get('sw_ofp_text', '');
-    if (rawText) { const m = parseOFP(rawText); [m.depIcao, m.destIcao, ...(m.altn || [])].filter(Boolean).forEach((i) => set.add(i)); }
-  }
   return [...set];
 }
 

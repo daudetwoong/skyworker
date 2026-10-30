@@ -1,4 +1,5 @@
 // 전역 시간 표시(Z/L) — L은 공항 로컬(OFP 오프셋 > DB tz > 기기), 모든 시각 표기는 이 모듈을 거친다
+import { t } from './i18n.js';
 let pref = 'Z'; // 'Z' | 'L'
 try { pref = localStorage.getItem('sw_timefmt') === 'L' ? 'L' : 'Z'; } catch {}
 
@@ -48,8 +49,8 @@ export function fmtHmZ(hm, offsetMin, baseDate) {
 // 날짜 포함 표기 (타임라인용)
 export function fmtDayTime(date, offsetMin) {
   if (!(date instanceof Date) || isNaN(date)) return '—';
-  if (pref === 'Z') return `${p2(date.getUTCDate())}일 ${p2(date.getUTCHours())}:${p2(date.getUTCMinutes())}Z`;
+  if (pref === 'Z') return `${p2(date.getUTCDate())}${t('daySfx')} ${p2(date.getUTCHours())}:${p2(date.getUTCMinutes())}Z`;
   const off = offsetMin == null ? -date.getTimezoneOffset() : offsetMin;
   const d = new Date(date.getTime() + off * 60000);
-  return `${p2(d.getUTCDate())}일 ${p2(d.getUTCHours())}:${p2(d.getUTCMinutes())}L`;
+  return `${p2(d.getUTCDate())}${t('daySfx')} ${p2(d.getUTCHours())}:${p2(d.getUTCMinutes())}L`;
 }

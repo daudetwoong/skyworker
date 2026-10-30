@@ -18,10 +18,3 @@ export function sunTimes(date, lat, lon) {
   const fromJ = (j) => new Date((j - 2440587.5) * 86400000);
   return { rise: fromJ(jRise), set: fromJ(jSet) };
 }
-
-export function fmtUtcKst(d) {
-  const p = (n) => String(n).padStart(2, '0');
-  const utc = `${p(d.getUTCHours())}:${p(d.getUTCMinutes())}Z`;
-  const k = new Date(d.getTime() + 9 * 3600 * 1000);
-  return `${utc} (${p(k.getUTCHours())}:${p(k.getUTCMinutes())} KST)`;
-}

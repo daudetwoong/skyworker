@@ -38,7 +38,7 @@ export function decodeWxString(s) {
 
 export function fmtWind(wdir, wspd, wgst) {
   if (wspd === 0 || wspd === '0') return t('calm');
-  const dir = (wdir === 'VRB' || wdir === 0 && !wspd) ? t('variable') : `${String(wdir).padStart(3, '0')}°`;
+  const dir = wdir === 'VRB' ? t('variable') : `${String(wdir).padStart(3, '0')}°`;
   let s = `${dir} ${wspd}kt`;
   if (wgst) s += ` (${t('gust')} ${wgst}kt)`;
   return s;
@@ -46,7 +46,7 @@ export function fmtWind(wdir, wspd, wgst) {
 
 export function fmtVis(raw, visib) {
   if (raw && /\bCAVOK\b/.test(raw)) return t('cavok');
-  const m = raw && raw.match(/\s(\d{4})(NDV)?\s/);
+  const m = raw && raw.match(/\s(\d{4})(NDV)?(?:\s|$)/);
   if (m) { const v = parseInt(m[1], 10); return v >= 9999 ? '10km+' : v >= 1000 ? `${(v / 1000).toFixed(v % 1000 ? 1 : 0)}km` : `${v}m`; }
   if (visib != null) { const s = String(visib); return s.includes('+') ? '10km+' : `${s}SM`; }
   return '—';

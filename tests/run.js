@@ -96,5 +96,25 @@ ok(g.ok && g.src === 'ICAO-FPL', '폴백 판정', g.src);
 ok(g.depIcao === 'RJTT' && g.destIcao === 'RKSI' && g.altn[0] === 'RKSS', '폴백 구간/교체', `${g.depIcao}-${g.destIcao}/${g.altn}`);
 ok(g.plannedFL === 370, '폴백 계획FL', g.plannedFL);
 
+
+console.log('[회귀] 리뷰에서 발견된 엣지케이스');
+// 마하 속도 FPL
+const mach = parseOFP('(FPL-KAL123-IS\n-B77W/H-SDE2E3/LB1\n-RKSI0100\n-M084F350 OLMEN Y51 SOMAR\n-KSEA0920 KPDX\n-PBN/A1B1 DOF/260101)');
+ok(mach.plannedFL === 350, '마하 속도(M084F350)에서 계획FL', mach.plannedFL);
+// 중첩 괄호 FPL
+const nest = parseOFP('(FPL-ABC12-IS\n-A21N/M-S/L\n-RKSI0100\n-N0450F370 SOMAR\n-RJTT0200 RJAA\n-PBN/A1 RMK/TCAS(II) EQUIPPED)');
+ok(nest.ok && nest.destIcao === 'RJTT' && nest.altn[0] === 'RJAA', '중첩 괄호 FPL 블록', `${nest.destIcao}/${nest.altn}`);
+// 교체공항 3개
+const alt3 = parseOFP('(FPL-ABC12-IS\n-A21N/M-S/L\n-RKSI0100\n-N0450F370 SOMAR\n-VHHH0340 VMMC VHHX ZGSZ\n-PBN/A1 DOF/260101)');
+ok(alt3.altn.length === 3 && alt3.altn[2] === 'ZGSZ', '교체공항 3개 전부 캡처', alt3.altn);
+// raw 끝 시정
+ok(fmtVis('METAR RKSI 301400Z 21007KT 0800', null) === '800m', '문자열 끝 시정 0800', fmtVis('METAR RKSI 301400Z 21007KT 0800', null));
+
+console.log('[time] 시간 표시');
+const { fmtHmZ, fmtDayTime, fmtTime } = await import('../src/time.js');
+ok(fmtHmZ('08.50', 540) === '08:50Z', 'Z 기본 표시', fmtHmZ('08.50', 540));
+ok(fmtTime(new Date('2026-01-01T01:00:00Z'), 540) === '01:00Z', 'fmtTime Z', fmtTime(new Date('2026-01-01T01:00:00Z'), 540));
+ok(fmtDayTime(new Date('2026-01-01T01:00:00Z'), null).includes('01:00Z'), 'fmtDayTime Z');
+
 if (fails) { console.error(`\n${fails}개 실패`); process.exit(1); }
 console.log('\n모든 테스트 통과');
