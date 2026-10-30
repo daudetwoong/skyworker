@@ -4,7 +4,7 @@
 
 - [x] 프로젝트 스캐폴드 (CLAUDE.md·체크리스트·컨텍스트 노트·git)
 - [x] 기상 중계 Worker (`proxy/worker.js`) 작성
-- [x] Worker 배포 (ft-wx-proxy, 이름 확정 시 개명)
+- [x] Worker 배포 (skyworker-wx)
 - [x] PWA 뼈대: index.html + manifest + service worker (오프라인 셸 캐시)
 - [x] i18n 구조 (ko 기본 + en 뼈대)
 - [x] 공항 카드: METAR 한국어 풀이 + 비행 카테고리 색 표시
@@ -16,7 +16,7 @@
 - [x] 마지막 조회 데이터 오프라인 표시 (localStorage 스냅샷)
 - [x] node 로직 테스트 (tests/run.js)
 - [ ] 앱 아이콘 (PNG 192/512 — 손그림 무드, 이름 확정 후)
-- [ ] 이름 확정 → 폴더·Worker·저장소 개명
+- [x] 이름 확정(SkyWorker) → 폴더·Worker 개명
 - [ ] GitHub 저장소 생성 + Pages 배포 + Worker ALLOW_ORIGINS에 실주소 추가
 - [ ] 형님 실기기(아이패드/폰) 테스트
 

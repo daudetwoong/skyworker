@@ -1,7 +1,7 @@
 // AWC JSON(METAR/TAF)을 한국어 문장으로 렌더링 — 사전에 없는 코드는 창작하지 않고 원문 유지
 import { t } from './i18n.js';
 
-export const PROXY_DEFAULT = 'https://ft-wx-proxy.daudet0127.workers.dev';
+export const PROXY_DEFAULT = 'https://skyworker-wx.daudet0127.workers.dev';
 
 export function proxyBase() {
   try { return localStorage.getItem('ft_proxy') || PROXY_DEFAULT; } catch { return PROXY_DEFAULT; }

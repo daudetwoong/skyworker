@@ -1,4 +1,4 @@
-// 기상 중계 Worker — aviationweather.gov가 CORS를 안 주므로 이 Worker가 유일한 통로 (ft-wx-proxy, 이름 확정 시 개명)
+// 기상 중계 Worker — aviationweather.gov가 CORS를 안 주므로 이 Worker가 유일한 통로 (skyworker-wx)
 // GET /health                 → {ok:true}
 // GET /wx/metar?ids=RKSI,RKPC → AWC METAR JSON 그대로 (90초 캐시)
 // GET /wx/taf?ids=RKSI        → AWC TAF JSON 그대로 (5분 캐시)
@@ -28,7 +28,7 @@ async function relay(kind, ids, origin, ctx) {
     const body = await hit.text();
     return new Response(body, { headers: { 'Content-Type': 'application/json; charset=utf-8', 'X-Cache': 'HIT', ...cors(origin) } });
   }
-  const r = await fetch(upstream, { headers: { 'Accept': 'application/json', 'User-Agent': 'flighttool-wx-proxy/0.1 (personal, non-commercial)' } });
+  const r = await fetch(upstream, { headers: { 'Accept': 'application/json', 'User-Agent': 'skyworker-wx-proxy/0.1 (personal, non-commercial)' } });
   if (!r.ok) return json({ error: `upstream HTTP ${r.status}` }, 502, origin);
   const body = await r.text();
   ctx.waitUntil(cache.put(cacheKey, new Response(body, { headers: { 'Cache-Control': `s-maxage=${ttl}` } })));

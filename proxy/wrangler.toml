@@ -1,5 +1,5 @@
-# ft-wx-proxy 배포 설정 (프로젝트 이름 확정 시 개명)
-name = "ft-wx-proxy"
+# skyworker-wx 배포 설정
+name = "skyworker-wx"
 main = "worker.js"
 compatibility_date = "2026-10-01"
 workers_dev = true
