@@ -19,3 +19,13 @@
 - B2B: ForeFlight Dispatch(운항관리)·Business/기단 단위 계약, Military Flight Bag(군용).
 - 부가: Sentry ADS-B 수신기(하드웨어), Jeppesen 차트 구독 연동(보잉 계열 시너지).
 - 교훈: ①개인 구독으로 시작해 압도적 사용성으로 표준이 된 뒤 B2B·군으로 확장 ②하드웨어/차트 등 생태계 부가 수익 ③우리의 현 단계는 "압도적 사용성" 구간 — ForeFlight도 처음엔 기능으로 이겼다.
+
+## 2026-10-31 홈 전환: 공항 허브 → "내 비행" (형님 지시)
+
+- 홈은 공항 리스트가 아니라 **오늘 내 비행**이다. OFP 텍스트를 붙여넣으면 브리핑이 자동 구성된다. 공항 수동 조회는 보조 탭으로 강등.
+- 리서치 근거: ForeFlight Altitude Advisor(고도별 시간·연료 재계산)가 유료 핵심 기능, skybook/AvioBook 등 업계 표준이 "비행 단위 브리핑 + 오프라인 우선". 우리 FL 트레이드가 정확히 그 자리.
+- **실제 OZ OFP(APMS/Lido)로 포맷 해독 완료**: 헤더(편명/기체/레그/CI), STD·ETD·STA·ETA(+공항별 P0800식 UTC오프셋 — 시간 로컬표시에 그대로 사용), 연료표, DISP REMARK, ALTN SUMMARY, ICAO FPL 블록(EET 포함), 항법로그 2줄 페어(DST·FL·MC/TC·TAS·GS·ZT), **UPPER WIND/TEMP 매트릭스(웨이포인트×FL250~400 6개 레벨, ddsssMtt 형식)**.
+- FL 트레이드 계산: 순항 구간(TOC~TOD)별 TC·DIST + 매트릭스 바람/온도 → 계획 FL TAS·온도로 마하 역산 → 각 FL TAS 재계산 → GS 합산 ETA. 연료는 수치 금지, 추세 화살표만(R2·R3).
+- 범용 폴백: ICAO ATC FPL 블록 `(FPL-...)`은 전 세계 공통 → 어떤 항공사 OFP든 편명/출도착/교체/순항FL/경로 최소 파싱 보장.
+- **회사 OFP 원문은 저장소에 커밋 금지(R2)** — 테스트 픽스처는 같은 구조의 가공 데이터로 작성, 실OFP 검증은 로컬에서만.
+- 시간 표시: 전역 Z/L 토글(헤더). L=공항 로컬(비행 공항은 OFP 오프셋, 공항탭은 DB tz, 모르면 기기).
