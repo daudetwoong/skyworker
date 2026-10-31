@@ -11,6 +11,7 @@ import { parseNotamPackage, isActive, activeInWindow, headline, literalKo, gloss
 import { explainFpl, annotateFpl, FIR_KO } from './fpl.js';
 import { verifyModel } from './verify.js';
 import { requestPersist, storageStatus, isStandalone, isIOS } from './storage.js';
+import { routeCells, fetchSigmets, fetchPireps, normSigmet, classifySigmet, nearPireps, placeable } from './sigmet.js';
 
 const $ = (sel) => document.querySelector(sel);
 // localStorage가 막히거나(개인정보 보호 모드) 꽉 차도 이번 세션은 메모리로 계속 동작하게 한다
@@ -260,7 +261,7 @@ function checkSummary(b) {
   cs.forEach((c) => det.append(el('div', 'chk-row' + (c.ok ? '' : ' chk-row-bad'), chkLine(c))));
   b.append(det);
 }
-const CARD_IDS_ALL = ['summary', 'map', 'todo', 'notam', 'wx', 'near', 'sr', 'fltrade', 'timeline', 'fuel', 'fpl', 'altn', 'raw'];
+const CARD_IDS_ALL = ['summary', 'map', 'todo', 'notam', 'sig', 'wx', 'near', 'sr', 'fltrade', 'timeline', 'fuel', 'fpl', 'altn', 'raw'];
 function kv(body, pairs) {
   const g = el('div', 'kv');
   pairs.forEach(([k, v, cls]) => { if (v != null && v !== '') { const c = el('div', 'kv-item' + (cls ? ' ' + cls : '')); c.append(el('div', 'kv-k', k), el('div', 'kv-v', String(v))); g.append(c); } });
@@ -357,7 +358,11 @@ async function drawMap() {
   const roles = { [model.depIcao]: t('depAp'), [model.destIcao]: t('destAp') };
   const apts = [model.depIcao, model.destIcao, ...(model.altn || [])].filter(Boolean).map((i) => ({ ...apCoords(i), role: roles[i] || t('altnAp') }));
   const notams = (model._notam?.items || []).filter((n) => n.area && n.act && (n.rel === 'direct' || n.rel === 'near')).map((n) => ({ id: `${n.icao} ${n.id}`, title: headline(n), text: n.etext, level: n.rel, area: n.area }));
+  const si = sigItems();
+  const sigmets = si.items.map(({ sg, c }) => ({ polys: sg.polys, points: sg.points, cls: c.cls, title: `${SIG_DOT[c.cls]} ${sigTitle(sg)}`, text: `${sigAltText(sg)} · ${sg.raw}` }));
+  const pireps = si.pireps.map((p) => ({ lat: p.lat, lon: p.lon, label: `PIREP ${p.fl != null ? 'FL' + p.fl : ''} ${p.tb || ''} ${p.ic || ''}`.trim() }));
   await renderMap(mapHost, {
+    sigmets, pireps,
     route: model._leg, srRuns: model._srRuns, notams, airports: apts, turb: acPos ? [...turbMarks, { lat: acPos.lat, lon: acPos.lon, label: `✈️ ${model.reg}` }] : turbMarks,
     gps: gps ? { ...gps, trail: gpsTrail } : null,
     follow: store.get('sw_follow', '1') === '1', tiles: store.get('sw_tiles', '0') === '1',
@@ -581,6 +586,90 @@ function nearCard() {
 
 // ── NOTAM 브리핑 ──
 let notamTab = 'DEP', notamAll = false;
+// ── 경로 SIGMET·PIREP: 출발 전 받아 둔 자료를 스냅샷으로 저장해 기내에서도 본다 ──
+// 스냅샷 {key, sig:{at, items, stale}|null, pirep:{at, items, stale}|null} — 출처마다 따로 (한쪽만 실패해도 다른 쪽을 '새 자료'로 속이지 않게)
+function sigSnapshot() { try { return JSON.parse(store.get('sw_sig', 'null')); } catch { return null; } }
+let sigBusy = false;
+async function refreshSig() {
+  const m = ensureModel(); if (!m?._route?.length || sigBusy) return;
+  const cells = routeCells(m._route); if (!cells) return;
+  sigBusy = true;
+  try {
+    const key = cells.join(',');
+    const [sr, pr] = await Promise.allSettled([fetchSigmets(cells), fetchPireps(cells)]);
+    const prev = sigSnapshot();
+    const same = prev?.key === key;
+    const pick = (res, old, map) => res.status === 'fulfilled' ? { at: Date.now(), items: map(res.value), stale: false } : (same && old ? { ...old, stale: true } : null);
+    // PIREP은 경로 100NM 안 난류·착빙만 남겨 저장(용량 절약)
+    const next = { key, sig: pick(sr, prev?.sig, (v) => v), pirep: pick(pr, prev?.pirep, (v) => nearPireps(v, m._leg)) };
+    store.set('sw_sig', JSON.stringify(next));
+    sigMemo = null;
+  } finally { sigBusy = false; }
+}
+// 현재 비행 기준 분류 결과 — 스냅샷·지연·비행이 같으면 다시 계산하지 않는다(GPS로 지도를 자주 다시 그려도 가볍게)
+let sigMemo = null;
+function sigItems() {
+  const m = model;
+  const cells = m?._route?.length ? routeCells(m._route) : null;
+  if (!cells) return { snap: null, items: [], pireps: [], unplaced: 0, cellsOk: false };
+  const rawSnap = store.get('sw_sig', '');
+  const etdMs = m.etdDate ? m.etdDate.getTime() + delayMin(m) * 60000 : null;
+  const memoKey = `${flightKey(m)}|${etdMs}|${rawSnap.length}|${rawSnap.slice(0, 120)}|${Math.floor(Date.now() / 600000)}`;
+  if (sigMemo?.k === memoKey) return sigMemo.v;
+  let snap = null; try { snap = JSON.parse(rawSnap || 'null'); } catch {}
+  let v;
+  if (!snap || snap.key !== cells.join(',')) v = { snap: null, items: [], pireps: [], unplaced: 0, cellsOk: true, etdMs };
+  else {
+    const plan = { etdMs, cruiseFt: (m.plannedFL || 350) * 100 };
+    const order = { red: 0, amber: 1, yellow: 2 };
+    const all = (snap.sig?.items || []).map(normSigmet).map((sg) => ({ sg, c: classifySigmet(sg, m._leg, plan) }));
+    const items = all.filter((x) => x.c.cls).sort((a, b) => order[a.c.cls] - order[b.c.cls] || (a.c.enterMin ?? 1e9) - (b.c.enterMin ?? 1e9) || a.c.dNm - b.c.dNm);
+    v = { snap, items, pireps: snap.pirep?.items || [], unplaced: all.filter((x) => x.c.unplaced).length, cellsOk: true, etdMs, timeSkip: all.find((x) => x.c.timeSkip)?.c.timeSkip || null };
+  }
+  sigMemo = { k: memoKey, v };
+  return v;
+}
+function agoText(ms) { const mi = Math.max(0, Math.round((Date.now() - ms) / 60000)); return mi < 120 ? `${mi}${t('minAgo')}` : mi < 2880 ? `${Math.round(mi / 60)}${t('hrAgo')}` : `${Math.round(mi / 1440)}${t('dayAgo')}`; }
+const SIG_DOT = { red: '🔴', amber: '🟠', yellow: '🟡' };
+function hzKo(h) { const k = 'hz_' + h; const v = t(k); return v === k ? h : v; }
+function sigTitle(sg) { return `${sg.fir} ${hzKo(sg.hazard)}${sg.qual ? ' · ' + sg.qual : ''}`; }
+function sigAltText(sg) { const f = (ft) => (ft == null ? '' : ft === 0 ? 'SFC' : 'FL' + String(Math.round(ft / 100)).padStart(3, '0')); return sg.base == null && sg.top == null ? t('sigAltNa') : `${f(sg.base)}~${f(sg.top)}`; } // 하한/상한이 없으면 비워 둔다(~FL510)
+function sigCard() {
+  if (!model?._route?.length) return null;
+  return briefCard('sig', t('cardSig'), (b) => {
+    const { snap, items, pireps, cellsOk, etdMs, unplaced, timeSkip } = sigItems();
+    if (!cellsOk) { b.append(el('div', 'note', t('sigBboxNa'))); return; }
+    if (!snap) { b.append(el('div', 'note', t('sigNoData'))); return; }
+    const src = (lab, part) => part ? `${lab}: ${part.stale ? '⚠ ' + t('sigStale') + ' · ' : ''}${fmtDayTime(new Date(part.at), null)} (${agoText(part.at)})` : `${lab}: ⚠ ${t('sigNotFetched')}`;
+    b.append(el('div', 'sub-line', `${src('SIGMET', snap.sig)} · ${src('PIREP', snap.pirep)}`));
+    if (!snap.sig) { b.append(el('div', 'note warn-note', t('sigNotFetchedLong'))); }
+    else {
+      if (timeSkip) b.append(el('div', 'note', t(timeSkip === 'noEtd' ? 'sigTimeSkipNoEtd' : 'sigTimeSkip')));
+      if (!items.length) b.append(el('div', 'note', t('sigNone')));
+      if (unplaced) b.append(el('div', 'note warn-note', t('sigUnplaced').replace('{n}', unplaced)));
+    }
+    items.forEach(({ sg, c }) => {
+      const d = document.createElement('details'); d.className = 'sig-item sig-' + c.cls;
+      const sm = el('summary'); sm.append(el('span', 'sig-dot', SIG_DOT[c.cls]), el('b', null, sigTitle(sg)));
+      const sub = [];
+      if (c.dNm === 0 && c.enterMin != null) {
+        const at = etdMs != null ? ` ≈ ${fmtDayTime(new Date(etdMs + c.enterMin * 60000), null)}~${fmtDayTime(new Date(etdMs + c.exitMin * 60000), null)}` : '';
+        sub.push(`${t('sigPass')} T+${hmFromMin(c.enterMin)}~${hmFromMin(c.exitMin)}${at}${c.enterPoint ? ` (${c.enterPoint}~)` : ''}`);
+      } else if (c.dNm) sub.push(`${t('sigNear')} ${c.dNm}NM`);
+      sub.push(`${t('sigAlt')} ${sigAltText(sg)}${c.altOk === false ? ' · ' + t('sigAltOut') : ''}`);
+      if (sg.from && sg.to) sub.push(`${t('sigValid')} ${fmtDayTime(new Date(sg.from), null)}~${fmtDayTime(new Date(sg.to), null)}${c.timeOk === false ? ' · ' + t('sigTimeOut') : ''}`);
+      if (sg.mov) sub.push(sg.mov === 'STNR' ? `${t('sigStnr')}${sg.chng ? ' · ' + sg.chng : ''}` : `${t('sigMov')} ${sg.mov}${sg.chng ? ' · ' + sg.chng : ''}`);
+      sm.append(el('div', 'sub-line', sub.join(' · ')));
+      d.append(sm, el('pre', 'raw', sg.raw));
+      b.append(d);
+    });
+    if (pireps.length) {
+      b.append(el('div', 'sect-title', t('sigPirep')));
+      pireps.forEach((p) => b.append(el('div', 'sig-pirep', `✈︎ ${p.fl != null ? 'FL' + String(p.fl).padStart(3, '0') + ' · ' : ''}${[p.tb && t('pTurb') + ' ' + p.tb, p.ic && t('pIce') + ' ' + p.ic].filter(Boolean).join(' · ')} · ${t('sigNear')} ${p.dNm}NM${p.at ? ' · ' + fmtDayTime(new Date(p.at), null) : ''} — ${p.raw}`)));
+    }
+    b.append(el('div', 'sub-line', t('sigNote')));
+  });
+}
 function notamCard() {
   const np = model._notam;
   return briefCard('notam', t('cardNotam'), (b) => {
@@ -808,6 +897,7 @@ function timelineCard() {
     if (toc?.accMin != null) rows.push([t('tlToc'), new Date(m.etdDate.getTime() + toc.accMin * 60000), null, null]);
     (m.eet || []).forEach((e) => rows.push([`${t('tlFir')} ${e.fir}${FIR_KO[e.fir] ? '(' + FIR_KO[e.fir] + ')' : ''}`, new Date(m.etdDate.getTime() + e.min * 60000), null, null]));
     m._srRuns.forEach((r) => { if (r.t0 != null) rows.push([`🌪️ ${t('tlSr')} SR${r.max} ${m._leg[r.s]?.point}→${m._leg[r.i1]?.point}`, new Date(m.etdDate.getTime() + r.t0 * 60000), null, null]); });
+    sigItems().items.filter(({ c }) => c.cls === 'red' && c.enterMin != null).forEach(({ sg, c }) => rows.push([`⛈️ ${t('tlSig')} ${sigTitle(sg)}`, new Date(m.etdDate.getTime() + c.enterMin * 60000), null, null])); // 타임라인 다른 줄과 같은 기준(OFP ETD)
     const tod = m._leg?.find((r) => r.point === 'TOD');
     if (tod?.accMin != null) rows.push([t('tlTod'), new Date(m.etdDate.getTime() + tod.accMin * 60000), null, null]);
     if (m.etaDate) rows.push([t('tlEta'), m.etaDate, m.dest?.tzMin, m.destIcao]);
@@ -1028,7 +1118,7 @@ function flightView(container) {
   actions.append(bCopy, bPrint, bNew);
   if (store.unsaved('sw_ofp_text')) container.append(el('div', 'note warn-note unsaved-note', '⚠ ' + t('storUnsavedWarn')));
   container.append(actions);
-  [summaryCard(), mapCard(), todoCard(), notamCard(), wxCardsWrap(), nearCard(), srCard(), flTradeCard(), timelineCard(), fuelCard(), fplCard(), altnCard(), rawCard(rawText)]
+  [summaryCard(), mapCard(), todoCard(), notamCard(), sigCard(), wxCardsWrap(), nearCard(), srCard(), flTradeCard(), timelineCard(), fuelCard(), fplCard(), altnCard(), rawCard(rawText)]
     .filter(Boolean).forEach((c) => container.append(c));
   container.append(cardSettingsRow());
   container.append(storagePanel());
@@ -1060,7 +1150,8 @@ function neededIcaos() {
 }
 async function refreshWx() {
   const ids = neededIcaos();
-  if (!ids.metar.length) { render(); return; }
+  if (!ids.metar.length) { refreshSig().then(render).catch(() => {}); render(); return; }
+  refreshSig().then(() => { if (sigMemo === null) render(); }).catch(() => {}); // SIGMET은 따로 — 기상 표시를 붙잡지 않게
   const [mr, tr] = await Promise.allSettled([fetchWx('metar', ids.metar), fetchWx('taf', ids.taf)]);
   const okAny = mr.status === 'fulfilled' || tr.status === 'fulfilled';
   if (okAny) {

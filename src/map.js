@@ -21,23 +21,29 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '
 // opts: {route, srRuns, notams:[{id,title,text,level,area:{type,center,rNm,pts}}], airports, gps:{lat,lon,hdg,spd,alt,trail}, turb:[{lat,lon,label}], follow, tiles, routeKey, labels:{...}}
 export async function renderMap(container, opts) {
   const L = await loadLeaflet();
-  const { route = [], srRuns = [], notams = [], airports = [], gps = null, turb = [], follow = false, tiles = false, routeKey = '' } = opts;
+  if (!container.isConnected) return null; // 연달아 렌더될 때 이미 떨어진 상자에 그리면 크기 0 → 최대 확대 뷰가 저장되는 버그
+  const { route = [], srRuns = [], notams = [], airports = [], gps = null, turb = [], follow = false, tiles = false, routeKey = '', sigmets = [], pireps = [] } = opts;
   const pts = route.filter((r) => r.lat != null && r.lon != null);
-  let map = container._lmap;
-  if (!map) {
-    map = L.map(container, { attributionControl: false, zoomControl: true, worldCopyJump: false, minZoom: 2, maxZoom: 13 });
-    map.setView(lastView ? lastView.c : [35, 125], lastView ? lastView.z : 4); // 레이어 추가 전 뷰 필수(없으면 'min' 에러)
-    container._lmap = map;
+  // 초기화는 상자당 한 번만 — 연달아 불려도 같은 약속을 기다린다(레이어 준비 전 접근 방지)
+  if (!container._init) container._init = (async () => {
+    const m = L.map(container, { attributionControl: false, zoomControl: true, worldCopyJump: false, minZoom: 2, maxZoom: 13 });
+    m.setView(lastView ? lastView.c : [35, 125], lastView ? lastView.z : 4); // 레이어 추가 전 뷰 필수(없으면 'min' 에러)
+    container._lmap = m;
     const coast = await loadCoast();
-    L.geoJSON(coast, { style: { color: 'var(--map-coast)', weight: 1, opacity: 0.9 }, interactive: false }).addTo(map);
+    if (!container.isConnected) { try { m.remove(); } catch {} container._lmap = null; return null; }
+    L.geoJSON(coast, { style: { color: 'var(--map-coast)', weight: 1, opacity: 0.9 }, interactive: false }).addTo(m);
     const grid = [];
     for (let lat = -80; lat <= 80; lat += 10) grid.push([[lat, -180], [lat, 180]]);
     for (let lon = -180; lon <= 180; lon += 10) grid.push([[-85, lon], [85, lon]]);
-    L.polyline(grid, { color: 'var(--map-grid)', weight: 0.6, interactive: false }).addTo(map);
-    map.on('moveend zoomend', () => { lastView = { c: map.getCenter(), z: map.getZoom() }; });
-    container._layers = L.layerGroup().addTo(map);
+    L.polyline(grid, { color: 'var(--map-grid)', weight: 0.6, interactive: false }).addTo(m);
+    m.on('moveend zoomend', () => { if (container.isConnected && container.clientWidth > 0) lastView = { c: m.getCenter(), z: m.getZoom() }; });
+    container._layers = L.layerGroup().addTo(m);
     container._tiles = null;
-  }
+    return m;
+  })();
+  container._init.catch(() => { container._init = null; }); // 초기화 실패(예: Leaflet 못 읽음)면 다음 호출에서 다시 시도
+  const map = await container._init;
+  if (!map || !container.isConnected || !container._layers) return null;
   if (tiles && !container._tiles) {
     container._tiles = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 13, opacity: 0.85 }).addTo(map);
     container._tiles.bringToBack();
@@ -77,6 +83,17 @@ export async function renderMap(container, opts) {
     else layer = L.circleMarker([a.center.lat, a.center.lon], { radius: 6, color: col, fillColor: col, fillOpacity: 0.5, weight: 1.5 });
     layer.addTo(g).bindPopup(`<b>${esc(n.id)}</b> ${esc(n.title || '')}<br><span class="swmap-pop">${esc((n.text || '').slice(0, 220))}</span>`);
   });
+  // 경로 SIGMET 구역 (빨강=통과·시각·고도 걸림, 주황=통과하지만 시각/고도 밖, 노랑=근처)
+  const SIGCOL = { red: '#ef4444', amber: '#f59e0b', yellow: '#eab308' };
+  sigmets.forEach((sg) => {
+    const style = { color: SIGCOL[sg.cls] || '#94a3b8', weight: sg.cls === 'red' ? 2 : 1.2, dashArray: '6 4', fillOpacity: sg.cls === 'red' ? 0.18 : 0.08 };
+    const pop = `<b>${esc(sg.title)}</b><br><span class="swmap-pop">${esc((sg.text || '').slice(0, 320))}</span>`;
+    (sg.polys || []).forEach((ring) => L.polygon(ring.map((p) => [p.lat, p.lon]), style).addTo(g).bindPopup(pop)); // 고리는 경도를 펴 둬서 날짜변경선도 이어짐
+    (sg.points || []).forEach((c) => L.circle([c.lat, c.lon], { ...style, radius: 30 * 1852 }).addTo(g).bindPopup(pop));
+  });
+  pireps.forEach((p) => {
+    L.marker([p.lat, p.lon], { icon: L.divIcon({ className: 'swmap-turb', html: '⚠️', iconSize: [18, 18], iconAnchor: [9, 9] }) }).addTo(g).bindTooltip(esc(p.label), { direction: 'top' }); // 외부 자료라 이스케이프
+  });
   turb.forEach((tb) => {
     L.marker([tb.lat, tb.lon], { icon: L.divIcon({ className: 'swmap-turb', html: '🌀', iconSize: [20, 20], iconAnchor: [10, 10] }) }).addTo(g).bindTooltip(tb.label, { direction: 'top' });
   });
@@ -86,11 +103,19 @@ export async function renderMap(container, opts) {
       .bindTooltip(`GS ${gps.spd != null ? Math.round(gps.spd) + 'kt' : '--'} · ${gps.alt != null ? Math.round(gps.alt).toLocaleString() + 'ft' : '--'}`);
   }
 
+  map.invalidateSize();
   setTimeout(() => map.invalidateSize(), 50);
   if (gps && follow) map.setView([gps.lat, gps.lon], Math.max(map.getZoom(), 6), { animate: false });
   else if (routeKey !== lastRouteKey || !lastView) {
     const all = [...pts, ...airports.filter((a) => a.lat != null), ...(gps ? [gps] : [])].map((p) => [p.lat, p.lon]);
-    if (all.length) map.fitBounds(L.latLngBounds(all), { padding: [24, 24] });
+    // 상자 크기가 0이면(접힌 카드 등) 크기가 생길 때까지 맞춤을 미룬다 — 0일 때 맞추면 최대 확대가 된다
+    const fit = () => { if (all.length) map.fitBounds(L.latLngBounds(all), { padding: [24, 24], maxZoom: 9 }); };
+    if (container.clientWidth > 0 && container.clientHeight > 0) fit();
+    else if (window.ResizeObserver) {
+      container._ro?.disconnect(); // 접힌 카드에서 GPS로 자주 다시 그려도 관찰자는 하나만
+      const ro = new ResizeObserver(() => { if (container.clientWidth > 0 && container.clientHeight > 0) { ro.disconnect(); container._ro = null; map.invalidateSize(); fit(); } });
+      container._ro = ro; ro.observe(container);
+    }
     lastRouteKey = routeKey;
   } else if (lastView && !container._viewRestored) {
     map.setView(lastView.c, lastView.z, { animate: false });
@@ -102,7 +127,8 @@ export async function renderMap(container, opts) {
 export function destroyMap(container) {
   const map = container?._lmap; if (!map) return;
   try { map.remove(); } catch {}
-  container._lmap = null; container._layers = null; container._tiles = null; container._attr = null;
+  container._ro?.disconnect(); container._ro = null;
+  container._lmap = null; container._layers = null; container._tiles = null; container._attr = null; container._init = null;
 }
 // 새 비행 로드 시 이전 비행의 뷰를 잊는다
 export function resetMapView() { lastView = null; lastRouteKey = null; }

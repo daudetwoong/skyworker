@@ -315,5 +315,56 @@ ok(!vk(verifyModel({ src: 'ICAO-FPL', fpl: { dep: 'RKSI', dest: 'RJBB' }, depIca
 const indentStart = NOTAM_LIDO_SAMPLE.replace('==========\nCREW ALERT\n==========', '====================================\nAREA ENROUTE DEPARTURE - DESTINATION\n====================================\n            R105/JIKDO\n                                                            Page 22 of 43\n                       OZ 998/23 Apr/ICN-HKG\n----------------------\n1D579/26  VALID: 2604222300 - 2604231300\n  RESTRICTED AREA ACT\n\n==========\nCREW ALERT\n==========');
 ok(parseNotamPackage(indentStart).items.length === 9 && countNotamHeaders(indentStart) === 9, '들여쓴 소구역으로 시작+꼬리말 끼인 밑줄도 계수=파싱', [parseNotamPackage(indentStart).items.length, countNotamHeaders(indentStart)]);
 
+console.log('[sigmet] 경로 SIGMET 분류');
+const { normSigmet, classifySigmet, routeCells, pirepCells, inPoly, nearPireps } = await import('../src/sigmet.js');
+// 가공 경로: (35,125) → (35,130) 동쪽으로, FL350 순항, 60분
+const rt = [{ point: 'AAA', lat: 35, lon: 125, accMin: 0, fl: 350 }, { point: 'BBB', lat: 35, lon: 127.5, accMin: 30, fl: 350 }, { point: 'CCC', lat: 35, lon: 130, accMin: 60, fl: 350 }];
+const etd = Date.UTC(2026, 9, 31, 0, 0);
+const box = (la0, lo0, la1, lo1) => [{ lat: la0, lon: lo0 }, { lat: la0, lon: lo1 }, { lat: la1, lon: lo1 }, { lat: la1, lon: lo0 }, { lat: la0, lon: lo0 }];
+const mk = (o) => normSigmet({ firId: 'RKRR', seriesId: '1', hazard: 'TURB', qualifier: 'SEV', validTimeFrom: (etd - 3600000) / 1000, validTimeTo: (etd + 4 * 3600000) / 1000, base: 30000, top: 40000, coords: box(34, 126.5, 36, 128.5), rawSigmet: 'RKRR SIGMET 1 ...', ...o });
+const plan = { etdMs: etd, cruiseFt: 35000, nowMs: etd };
+const c1 = classifySigmet(mk({}), rt, plan);
+ok(c1.cls === 'red' && c1.enterMin === 18 && c1.exitMin === 42 && c1.timeOk && c1.altOk, '경로 통과+시각+고도 → 빨강, 진입·이탈 분(18~42)', JSON.stringify(c1));
+ok(classifySigmet(mk({ base: 0, top: 20000 }), rt, plan).cls === 'amber', '고도 밖(FL200 이하) → 주황');
+ok(classifySigmet(mk({ validTimeFrom: (etd + 5 * 3600000) / 1000, validTimeTo: (etd + 8 * 3600000) / 1000 }), rt, plan).cls === 'amber', '통과 시각 밖 → 주황');
+const far = classifySigmet(mk({ coords: box(36, 126, 36.8, 127) }), rt, plan);
+ok(far.cls === 'yellow' && far.dNm > 0 && far.dNm <= 100, '경로 밖 100NM 이내 → 노랑', JSON.stringify(far));
+ok(classifySigmet(mk({ coords: box(40, 126, 41, 127) }), rt, plan).cls === null, '멀면 무관');
+const nowFar = etd + 10 * 86400000;
+const skipped = classifySigmet(mk({ validTimeFrom: (nowFar - 3600000) / 1000, validTimeTo: (nowFar + 3600000) / 1000 }), rt, { ...plan, nowMs: nowFar });
+ok(skipped.cls === 'red' && skipped.timeJudge === false && skipped.timeSkip === 'far' && skipped.timeOk === null, '지난 OFP(36시간 넘게 떨어짐)는 시각 판정 생략', JSON.stringify(skipped));
+ok(classifySigmet(mk({}), rt, { ...plan, nowMs: nowFar }).expired === true, '시각 판정을 생략할 땐 이미 끝난 SIGMET은 뺌');
+ok(classifySigmet(mk({ validTimeFrom: (nowFar - 3600000) / 1000, validTimeTo: (nowFar + 3600000) / 1000 }), rt, { cruiseFt: 35000, etdMs: null, nowMs: nowFar }).timeSkip === 'noEtd', 'ETD 없으면 생략 사유 noEtd');
+ok(classifySigmet(mk({ base: null, top: null }), rt, plan).cls === 'red', '고도 정보 없으면 걸치는 것으로');
+// 고도 추정: 상승은 출발→TOC 직선, 강하는 TOD→도착 직선
+const prof = [{ point: 'DEP', lat: 35, lon: 125, accMin: 0, fl: 'CL' }, { point: 'TOC', lat: 35, lon: 126, accMin: 20, fl: 350 }, { point: 'TOD', lat: 35, lon: 129, accMin: 50, fl: 350 }, { point: 'ARR', lat: 35, lon: 130, accMin: 70, fl: 'DSC' }];
+ok(classifySigmet(mk({ base: 0, top: 10000, coords: box(34, 125.05, 36, 125.3) }), prof, plan).cls === 'red', '상승 초반(저고도) 구간의 FL100 이하 SIGMET → 빨강');
+ok(classifySigmet(mk({ base: 0, top: 10000, coords: box(34, 125.75, 36, 125.95) }), prof, plan).cls === 'amber', '상승 막바지(고고도) 구간의 FL100 이하 SIGMET → 주황(예전엔 빨강 과대)');
+// 리뷰 반영: 여러 구역(AREAS)·점 SIGMET·날짜변경선·큰 구역 경계 거리·가는 띠
+const areas = normSigmet({ hazard: 'TS', coords: [box(10, 10, 11, 11), box(34.5, 127, 35.5, 128)] });
+ok(areas.polys.length === 2 && classifySigmet(areas, rt, plan).cls === 'red', "geom 'AREAS'(고리 여러 개)도 판정", JSON.stringify(areas.polys.map((r) => r.length)));
+const pt = normSigmet({ hazard: 'VA', coords: [{ lat: 35.2, lon: 127 }] });
+ok(pt.points.length === 1 && classifySigmet(pt, rt, plan).cls === 'red', '좌표 1개(화산 위치) SIGMET은 반경 30NM 원');
+ok(classifySigmet(normSigmet({ hazard: 'TS', coords: [] }), rt, plan).unplaced === true, '좌표 없는 SIGMET은 그리지 못함으로 따로 셈');
+const dl = normSigmet({ hazard: 'TURB', coords: [{ lat: 55, lon: 175 }, { lat: 65, lon: 175 }, { lat: 65, lon: -175 }, { lat: 55, lon: -175 }, { lat: 55, lon: 175 }] });
+const westOf = [{ point: 'W1', lat: 60, lon: 150, accMin: 0, fl: 350 }, { point: 'W2', lat: 60, lon: 165, accMin: 60, fl: 350 }];
+const across = [{ point: 'E1', lat: 60, lon: 170, accMin: 0, fl: 350 }, { point: 'E2', lat: 60, lon: -170, accMin: 60, fl: 350 }];
+ok(classifySigmet(dl, westOf, plan).cls !== 'red' && classifySigmet(dl, across, plan).cls === 'red', '날짜변경선 걸친 구역: 서쪽 경로는 비통과, 횡단 경로는 통과', JSON.stringify([classifySigmet(dl, westOf, plan).cls, classifySigmet(dl, across, plan)]));
+ok(inPoly({ lat: 60, lon: -178 }, dl.polys[0]) && !inPoly({ lat: 60, lon: 160 }, dl.polys[0]), '날짜변경선 고리 안/밖');
+const big = classifySigmet(mk({ coords: box(36, 120, 46, 140) }), rt, plan);
+ok(big.cls === 'yellow' && big.dNm >= 55 && big.dNm <= 65, '큰 구역은 꼭짓점이 아니라 경계선까지 거리(60NM)', JSON.stringify(big));
+ok(classifySigmet(mk({ coords: box(34, 127.01, 36, 127.05) }), rt, plan).cls === 'red', '폭 2NM 남짓 가는 띠도 통과로 잡음');
+ok(inPoly({ lat: 35, lon: 127 }, box(34, 126.5, 36, 128.5)) && !inPoly({ lat: 37, lon: 127 }, box(34, 126.5, 36, 128.5)), '다각형 안/밖');
+// 요청 칸: 장거리(인천→프랑크푸르트)·날짜변경선 경로도
+const icnFra = [{ lat: 37.5, lon: 126.4 }, { lat: 55, lon: 90 }, { lat: 60, lon: 40 }, { lat: 50.0, lon: 8.6 }];
+const cFra = routeCells(icnFra);
+ok(cFra && cFra.length <= 60 && cFra.includes('30_120') && cFra.includes('50_0'), '장거리 경로도 10° 칸으로(ICN→FRA)', cFra?.length);
+const cPac = routeCells([{ lat: 37.5, lon: 126.4 }, { lat: 45, lon: 179 }, { lat: 45, lon: -170 }, { lat: 34, lon: -118 }]);
+ok(cPac && cPac.includes('40_170') && cPac.includes('40_-180'), '태평양 횡단(날짜변경선) 칸', cPac?.slice(0, 6));
+ok(pirepCells(cFra).length === Math.min(16, cFra.length), 'PIREP 칸은 16개 이하');
+ok(JSON.stringify(routeCells(rt)) === JSON.stringify(['30_120', '30_130']), '짧은 경로 칸', JSON.stringify(routeCells(rt)));
+const pr = nearPireps([{ lat: 35.3, lon: 127, fltLvl: 340, tbInt1: 'MOD', tbType1: 'CAT', obsTime: 1, rawOb: 'X' }, { lat: 35.3, lon: 127, fltLvl: 340, tbInt1: 'NEG', icgInt1: 'NEG' }, { lat: 35.3, lon: 127, tbInt1: 'NEG', icgInt1: 'LGT', icgType1: 'RIME' }, { lat: 45, lon: 127, tbInt1: 'SEV' }], rt);
+ok(pr.length === 2 && pr[0].tb === 'MOD CAT' && pr[1].tb === '' && pr[1].ic === 'LGT RIME', "PIREP: 경로 100NM 이내만, 'NEG'(없음)는 위험 아님", JSON.stringify(pr));
+ok(normSigmet({ dir: '-', spd: '0', coords: [] }).mov === 'STNR' && normSigmet({ dir: 'E', spd: '20', coords: [] }).mov === 'E 20KT' && normSigmet({ coords: [] }).mov === '', 'SIGMET 이동: 정체/방향속도(KT)/없음');
 if (fails) { console.error(`\n${fails}개 실패`); process.exit(1); }
 console.log('\n모든 테스트 통과');
