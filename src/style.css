@@ -250,3 +250,12 @@ body[data-theme="light"] .swmap-tip { color:#1f2937; text-shadow:0 0 3px #fff,0 
 body[data-theme="light"] .fl-note b { color:#92400e; }
 .fl-note-title { border-left-color:var(--sub); color:var(--sub); }
 @media print { .fl-tok { border-bottom:none; padding:0; } .fl-note { break-inside:avoid; } .disclaimer { display:block !important; } }
+
+/* OFP 자체 검산 (v0.8) */
+.chk-badge { margin-left:8px; font-size:11px; font-weight:700; border-radius:99px; padding:1px 7px; vertical-align:middle; }
+.chk-badge.chk-ok { color:var(--good); border:1px solid color-mix(in srgb, var(--good) 45%, transparent); }
+.chk-badge.chk-bad { color:#fff; background:#d97706; }
+.chk-warn b { display:block; margin-bottom:3px; } .chk-warn div { font-size:12.5px; font-variant-numeric:tabular-nums; }
+.chk-sum { margin:8px 0 2px; font-size:12.5px; } .chk-sum > summary { cursor:pointer; font-weight:600; }
+.chk-sum.chk-ok > summary { color:var(--good); } .chk-sum.chk-bad > summary { color:#d97706; }
+.chk-row { font-size:12px; padding:2px 0; font-variant-numeric:tabular-nums; } .chk-row-bad { color:#d97706; font-weight:600; }

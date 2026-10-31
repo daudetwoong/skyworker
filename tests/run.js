@@ -71,7 +71,9 @@ ok(m.remarks?.[0]?.includes('VHHH TFC'), 'DISP REMARK', m.remarks);
 ok(m.altnSummary?.length === 2 && m.altnSummary[0].icao === 'VMMC', 'ALTN SUMMARY 2행', JSON.stringify(m.altnSummary?.map(a=>a.icao)));
 ok(m.altn?.includes('VMMC') && m.altn?.includes('VHHX'), 'FPL 교체공항 2개', m.altn);
 ok(m.plannedFL === 351, '계획 FL(FPL 마지막 레벨)', m.plannedFL);
-ok(m.navlog?.length === 5, '항법로그 5행(TOC~TOD)', m.navlog?.length);
+ok(m.navlog?.length === 6, '항법로그 6행(TOC~TOD+도착 공항)', m.navlog?.length);
+const mDest = m.navlog?.at(-1);
+ok(mDest?.point === 'VHHH' && Math.abs(mDest.lat - 22.3083) < 0.01 && Math.abs(mDest.lon - 113.915) < 0.01 && mDest.accMin === 220 && mDest.accFuel === 150 && mDest.dist === 118, 'APMS 도착 공항 행(TAXI/ELEV 2줄)', JSON.stringify(mDest));
 ok(m.navlog?.find(r=>r.point==='TOD')?.accMin === 102, 'TOD 누적시간 1:42', m.navlog?.find(r=>r.point==='TOD')?.accMin);
 ok(m.windMatrix?.levels?.length === 6 && m.windMatrix?.rows?.length === 5, '바람 매트릭스 6레벨×5행', `${m.windMatrix?.levels?.length}/${m.windMatrix?.rows?.length}`);
 ok(m.eet?.[0]?.fir === 'VHHK' && m.eet?.[0]?.min === 58, 'EET FIR', JSON.stringify(m.eet));
@@ -240,7 +242,7 @@ ok(dm.plannedFL === 240 && dm.dist?.gnd === 248 && dm.ci === 55, 'FL·거리·CI
 ok(dm.fuel?.trip?.v === 55 && dm.fuel?.extra?.extra === 'TKG' && dm.fuel?.ramp?.v === 244 && dm.weights?.tow === 1654, '연료·중량', JSON.stringify([dm.fuel?.trip, dm.fuel?.ramp, dm.weights]));
 ok(dm.remarks?.[0] === '8736 RAMP FUEL 14100LBS', '한 줄 DISP REMARK', dm.remarks);
 ok(dm.altnSummary?.length === 1 && dm.altnSummary[0].icao === 'RKJJ' && dm.altnSummary[0].fl === 80 && dm.altnSummary[0].comp === null, 'ALTN SUMMARY(국내선 열 구성)', JSON.stringify(dm.altnSummary));
-ok(dm.navlog?.length === 5 && dm.navlog[0].point === 'BULTI' && dm.navlog[0].accMin === 12 && dm.navlog[0].comp === 0 && dm.navlog.at(-1).point === 'TEDAN' && dm.navlog.at(-1).accMin === 29, '1줄 항법로그(공항행 제외, 누적시간)', JSON.stringify(dm.navlog?.map((r) => [r.point, r.accMin])));
+ok(dm.navlog?.length === 6 && dm.navlog[0].point === 'BULTI' && dm.navlog[0].accMin === 12 && dm.navlog[0].comp === 0 && dm.navlog.at(-1).point === 'RKPC' && dm.navlog.at(-1).accMin === 42, '1줄 항법로그(출발행 제외, 도착행 포함=TRIP 대조용)', JSON.stringify(dm.navlog?.map((r) => [r.point, r.accMin])));
 ok(dm.navlog?.find((r) => r.point === 'BEDES')?.fl === 240 && dm.navlog?.[0].lat == null, 'FL 숫자화·좌표 없음', dm.navlog?.find((r) => r.point === 'BEDES')?.fl);
 ok(dm.warnings.includes('noWindMatrix') && dm.warnings.includes('noCoords') && dm.route === 'BULTI Y711 DALSU Y253 TEDAN', '경고·FPL 경로', JSON.stringify([dm.warnings, dm.route]));
 ok(flTrade(dm) === null, '바람 매트릭스 없으면 FL 트레이드 없음');
@@ -285,6 +287,33 @@ const t2 = (item, text) => an2.find((l) => l.item === item)?.toks.find((x) => x.
 ok(t2('9·10', '2') && /2대/.test(t2('9·10', '2').note), '항공기 대수 유지');
 ok(/SID/.test(t2('15', 'SIDAA1A')?.note) && /VFR/.test(t2('15', 'N0300VFR')?.note), 'DCT 뒤 첫 절차=SID, VFR 전환', JSON.stringify([t2('15', 'SIDAA1A')?.note, t2('15', 'N0300VFR')?.note]));
 ok(an2.find((l) => l.item === '18').toks.map((x) => x.text).join('') === 'DEP/TEST RFP/Q1 RMK/X', 'Item 18 DEP/RFP 원문 보존', an2.find((l) => l.item === '18').toks.map((x) => x.text).join(''));
+
+console.log('[verify] OFP 자체 검산');
+const { verifyModel } = await import('../src/verify.js');
+const { countNotamHeaders } = await import('../src/notam.js');
+const vk = (list, key) => list.find((c) => c.key === key);
+const vc = verifyModel(m, OFP_SAMPLE);
+ok(vk(vc, 'navEnd')?.ok && vk(vc, 'fuelRqrd')?.ok && vk(vc, 'fuelTkof')?.ok && vk(vc, 'eetTrip')?.ok && vk(vc, 'navCoords')?.ok, '가공 APMS: 항법로그 끝=TRIP·연료합·EET·좌표 일치', JSON.stringify(vc.map((c) => [c.key, c.ok, c.a, c.b])));
+const vd = verifyModel(dm, OFP_DOM_SAMPLE);
+ok(vk(vd, 'fuelRqrd')?.ok && vk(vd, 'fuelTkof')?.ok && vk(vd, 'fuelRamp')?.ok && vk(vd, 'navEnd')?.ok && vk(vd, 'eetTrip')?.ok && vk(vd, 'fplRoute')?.ok, '국내선: 연료합·항법로그 끝·EET·출도착 일치', JSON.stringify(vd.map((c) => [c.key, c.ok, c.a, c.b])));
+ok(!vk(vd, 'navCoords'), '국내선은 좌표 검산 생략');
+const broken = parseOFP(OFP_DOM_SAMPLE.replace(' CONT        0011  00.10', ' C0NT        0011  00.10'));
+ok(vk(verifyModel(broken, ''), 'fuelRqrd')?.ok === false, 'CONT를 못 읽으면 연료 합계 ⚠', JSON.stringify(vk(verifyModel(broken, ''), 'fuelRqrd')));
+const lidoModel = { _notam: parseNotamPackage(NOTAM_LIDO_SAMPLE) };
+ok(countNotamHeaders(NOTAM_LIDO_SAMPLE) === 8 && vk(verifyModel(lidoModel, NOTAM_LIDO_SAMPLE), 'notamCount')?.ok, 'LIDO 노탐: 원문 머리 8 = 파싱 8 (CREW ALERT 제외)', countNotamHeaders(NOTAM_LIDO_SAMPLE));
+ok(vk(verifyModel({ _notam: { items: [] } }, NOTAM_LIDO_SAMPLE), 'notamCount')?.ok === false, '노탐을 하나도 못 읽으면 ⚠');
+ok(countNotamHeaders(OFP_DOM_SAMPLE) === null, '노탐 없는 OFP는 노탐 검산 생략');
+const apmsCont = parseOFP(OFP_SAMPLE.replace(/^CONT\s/m, 'CONT/RKPC '));
+ok(apmsCont.fuel?.cont?.v === m.fuel?.cont?.v, 'CONT/공항 꼴도 보정연료로 읽음', JSON.stringify([apmsCont.fuel?.cont, m.fuel?.cont]));
+
+const otherSec = NOTAM_LIDO_SAMPLE.replace('==========\nCREW ALERT\n==========', '==========\nOTHER INFO\n==========\n\nX1/26\n  NOT A NOTAM\n\n==========\nCREW ALERT\n==========');
+ok(countNotamHeaders(otherSec) === parseNotamPackage(otherSec).items.length, '노탐이 아닌 섹션의 ID 줄은 세지 않음(파서와 같은 기준)', [countNotamHeaders(otherSec), parseNotamPackage(otherSec).items.length]);
+const noTaxi = parseOFP(OFP_DOM_SAMPLE.replace(/^ TAXI        0004\n/m, ''));
+ok(!vk(verifyModel(noTaxi, ''), 'fuelRamp'), 'TAXI 줄이 없으면 RAMP 검산 생략');
+ok(!vk(verifyModel({ src: 'ICAO-FPL', fpl: { dep: 'RKSI', dest: 'RJBB' }, depIcao: 'RKSI', destIcao: 'RJBB' }, ''), 'fplRoute'), '범용 FPL 폴백이면 출도착 검산 생략(자기 자신과 비교)');
+
+const indentStart = NOTAM_LIDO_SAMPLE.replace('==========\nCREW ALERT\n==========', '====================================\nAREA ENROUTE DEPARTURE - DESTINATION\n====================================\n            R105/JIKDO\n                                                            Page 22 of 43\n                       OZ 998/23 Apr/ICN-HKG\n----------------------\n1D579/26  VALID: 2604222300 - 2604231300\n  RESTRICTED AREA ACT\n\n==========\nCREW ALERT\n==========');
+ok(parseNotamPackage(indentStart).items.length === 9 && countNotamHeaders(indentStart) === 9, '들여쓴 소구역으로 시작+꼬리말 끼인 밑줄도 계수=파싱', [parseNotamPackage(indentStart).items.length, countNotamHeaders(indentStart)]);
 
 if (fails) { console.error(`\n${fails}개 실패`); process.exit(1); }
 console.log('\n모든 테스트 통과');

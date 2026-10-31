@@ -46,6 +46,13 @@ function parseFplBlock(text) {
 function parseNavlog(lines) {
   const rows = [];
   for (let i = 0; i < lines.length - 1; i++) {
+    // 도착 공항 행: "ZBAA   TAXI   N040 04.4   0114   21/01.35" + "103 ELEV 0084FT   E116 35.9   007/0094"
+    const d1 = lines[i].match(/^([A-Z]{4})\s+TAXI\s+([NS])(\d{2,3})\s(\d{1,2}\.\d)\s.*?\s(\d{1,3})\/(\d{1,2}\.\d{2})\s*$/);
+    const d2 = d1 && lines[i + 1].match(/^\s*(\d{1,4})\s+ELEV\b.*?([EW])(\d{2,3})\s(\d{1,2}\.\d).*?\s(\d{1,3})\/(\d{3,4})\s*$/);
+    if (d1 && d2) {
+      rows.push({ lat: (d1[2] === 'S' ? -1 : 1) * (+d1[3] + parseFloat(d1[4]) / 60), lon: (d2[2] === 'W' ? -1 : 1) * (+d2[3] + parseFloat(d2[4]) / 60), sr: null, dist: +d2[1], point: d1[1], fl: 'DSC', mc: null, tc: null, gs: null, wind: null, comp: null, tas: null, accMin: hmToMin(d1[6]), accFuel: +d2[6], fir: null });
+      i += 1; continue;
+    }
     const m1 = lines[i].match(/^\s*(\d{1,3})\s+(-?[A-Z][A-Z0-9]{1,6})\s+(CL|DSC|\d{3})\s+(\d{1,3})\s+[NS]\d{2,3}\s/);
     if (!m1) continue;
     const t1 = lines[i].trim().split(/\s+/);
@@ -297,10 +304,10 @@ function parseDomNavlog(lines) {
   for (const line of lines) {
     const t = line.trim().split(/\s+/);
     // dist point awy fl [mora] rem/ zt/acc tif/acc [comp] [eet]
-    if (t.length < 7 || !/^\d{1,4}$/.test(t[0]) || !/^[A-Z][A-Z0-9]{1,6}$/.test(t[1]) || !/^(DCT|-|[A-Z]{1,2}\d{1,4}[A-Z]?)$/.test(t[2])) continue;
+    if (t.length < 7 || !/^\d{1,4}$/.test(t[0]) || !/^[A-Z][A-Z0-9]{1,6}$/.test(t[1]) || !/^(DCT|ARR|-|[A-Z]{1,2}\d{1,4}[A-Z]?)$/.test(t[2])) continue;
     const ri = t.findIndex((x) => /^\d{3,4}\/$/.test(x));
     if (ri < 0 || !/^\d{1,3}\/\d{4}$/.test(t[ri + 1] || '') || !/^\d{1,3}\/\d{4}$/.test(t[ri + 2] || '')) continue;
-    if (t[2] === '-') continue; // DEP/ARR 행(공항)은 제외 — 경로점만
+    if (t[2] === '-') continue; // DEP 행은 제외. ARR 행(도착 공항)은 넣어 누적시간=TRIP 대조에 쓴다
     const acc = t[ri + 1].split('/')[1], mm = +acc.slice(2);
     const comp = t.slice(ri + 3).find((x) => /^[PM]\d{2}$/.test(x));
     rows.push({
@@ -378,7 +385,7 @@ function parseApmsFuel(text, model) {
   const fuel = {};
   const fr = (name, re) => { const m = text.match(re); if (m) fuel[name] = { v: parseInt(m[1], 10), time: m[2] || null, extra: m[3] || null }; };
   fr('trip', /^\s*TRIP\s+(\d{3,5})\s+(\d{1,2}\.\d{2})/m);
-  fr('cont', /^\s*CONT\s+(\d{3,5})\s+(\d{1,2}\.\d{2})/m);
+  fr('cont', /^\s*CONT(?:\/[A-Z]{4})?\s+(\d{3,5})\s+(\d{1,2}\.\d{2})/m); // CONT/RKPC 꼴(보정연료 기준 공항)도
   const am = text.match(/^\s*ALTN\/([A-Z]{4})\s+(\d{3,5})\s+(\d{1,2}\.\d{2})/m);
   if (am) { fuel.altn = { v: parseInt(am[2], 10), time: am[3] }; model.altnIcao = am[1]; }
   fr('frsv', /^\s*F-RSV\s+(\d{3,5})\s+(\d{1,2}\.\d{2})/m);

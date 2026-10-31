@@ -9,6 +9,7 @@ import { parseOFP } from './ofp.js';
 import { flTrade } from './fltrade.js';
 import { parseNotamPackage, isActive, activeInWindow, headline, literalKo, glossary, scheduleKo, routeRelation, gcDistNm, CAT_KO, KIND_KO, similarCallsigns, fmsCoord, extractCoords } from './notam.js';
 import { explainFpl, annotateFpl, FIR_KO } from './fpl.js';
+import { verifyModel } from './verify.js';
 
 const $ = (sel) => document.querySelector(sel);
 const store = {
@@ -78,6 +79,7 @@ function buildModel(rawText) {
     });
     m._similar = similarCallsigns(rawText, m.callsign);
   }
+  m._checks = verifyModel(m, rawText); // 노탐 파싱 뒤에 (노탐 개수 대조 포함)
   applyNotamFlags(m);
   return m;
 }
@@ -220,13 +222,36 @@ function briefCard(id, title, build) {
   d.className = 'card'; d.dataset.card = id;
   d.open = store.get('sw_open_' + id, '1') === '1';
   d.addEventListener('toggle', () => store.set('sw_open_' + id, d.open ? '1' : '0'));
-  d.append(el('summary', 'card-sum', title));
+  const sum = el('summary', 'card-sum', title);
+  const checks = (model?._checks || []).filter((c) => c.card === id);
+  const bad = checks.filter((c) => !c.ok);
+  if (checks.length) { const bg = el('span', 'chk-badge ' + (bad.length ? 'chk-bad' : 'chk-ok'), bad.length ? `⚠ ${bad.length}` : '✓'); bg.title = bad.length ? t('chkBadTitle') : t('chkOkTitle'); sum.append(bg); }
+  d.append(sum);
   const body = el('div', 'card-body');
+  if (bad.length) { const w = el('div', 'note warn-note chk-warn'); w.append(el('b', null, '⚠ ' + t('chkWarn'))); bad.forEach((c) => w.append(el('div', null, chkLine(c)))); body.append(w); }
   const help = t('help_' + id);
   if (help && help !== 'help_' + id) { const h = document.createElement('details'); h.className = 'card-help'; h.append(el('summary', null, t('helpQ')), el('div', 'sub-line', help)); body.append(h); }
   build(body);
   d.append(body);
   return d;
+}
+function chkFmt(v, unit) { return unit === 'lbs100' ? p100lbs(v) : unit === 'min' ? hmFromMin(v) : String(v); }
+function chkLine(c) {
+  const A = chkFmt(c.a, c.unit), B = chkFmt(c.b, c.unit);
+  if (c.key === 'blockTrip') return `${c.ok ? '✓' : '⚠'} ${t('chk_' + c.key)}: ${A} · TRIP ${B}`; // 블록시간은 TRIP+지상이라 '='가 아님
+  const op = !c.ok ? '≠' : c.a === c.b ? '=' : '≈'; // 반올림 오차 안이면 ≈
+  return `${c.ok ? '✓' : '⚠'} ${t('chk_' + c.key)}: ${A} ${op} ${B}`;
+}
+function checkSummary(b) {
+  const cs = model._checks || [];
+  if (!cs.length) return;
+  const bad = cs.filter((c) => !c.ok);
+  const det = document.createElement('details'); det.className = 'chk-sum ' + (bad.length ? 'chk-bad' : 'chk-ok');
+  det.open = bad.length > 0;
+  det.append(el('summary', null, bad.length ? `⚠ ${t('chkSumBad').replace('{n}', bad.length).replace('{t}', cs.length)}` : `✓ ${t('chkSumOk').replace('{t}', cs.length)}`));
+  det.append(el('div', 'sub-line', t('chkExplain')));
+  cs.forEach((c) => det.append(el('div', 'chk-row' + (c.ok ? '' : ' chk-row-bad'), chkLine(c))));
+  b.append(det);
 }
 const CARD_IDS_ALL = ['summary', 'map', 'todo', 'notam', 'wx', 'near', 'sr', 'fltrade', 'timeline', 'fuel', 'fpl', 'altn', 'raw'];
 function kv(body, pairs) {
@@ -258,6 +283,7 @@ function summaryCard() {
     b.append(hero);
     if (m.src === 'ICAO-FPL') b.append(el('div', 'note', t('genericNote')));
     if (m.src === 'OZ-DOM') b.append(el('div', 'note', t('domNote')));
+    checkSummary(b);
     if (m._similar?.length) b.append(el('div', 'note warn-note', `🚨 ${t('similarCs')}: ${m._similar.join(', ')}`));
     kv(b, [
       ['STD', m.dep?.std && m.dep.std !== m.dep.etd ? fmtHmZ(m.dep.std, m.dep.tzMin) : null],

@@ -300,3 +300,29 @@ export function fmsCoord(p) {
   const f = (v, pos, neg, w) => { const a = Math.abs(v); const d = Math.floor(a); const mm = ((a - d) * 60).toFixed(1).padStart(4, '0'); return `${String(d).padStart(w, '0')}${mm}${v >= 0 ? pos : neg}`; };
   return `${f(p.lat, 'N', 'S', 2)}/${f(p.lon, 'E', 'W', 3)}`;
 }
+
+// 검산용: 원문에 있는 노탐 아이템 머리 줄 수 (파서가 놓친 게 있는지 대조)
+export function countNotamHeaders(text) {
+  const lines = String(text || '').replace(/\r/g, '').split('\n');
+  const pk = lines.findIndex((l) => /^\s*NOTAM\s+PACKAGE\s*\d/.test(l));
+  if (pk >= 0) return lines.slice(pk).filter((l) => /^\s*(?:\d+\.\s*)?\d{2}[A-Z]{3}\d{2}\s+\d{2}:\d{2}\s*-\s*(?:\d{2}[A-Z]{3}\d{2}\s+\d{2}:\d{2}|UFN|PERM|EST)\s+[A-Z]{4}\s+\S+\s*$/.test(l)).length;
+  const lb = lines.findIndex((l) => /LIDO-NOTAM-BULLETIN/.test(l));
+  if (lb < 0) return null;
+  let end = lines.findIndex((l, i) => i > lb && /END OF LIDO-NOTAM-BULLETIN/.test(l)); if (end < 0) end = lines.length;
+  // 파서와 같은 기준: 노탐 섹션(lidoKind≠null) 안, 첫 영역 헤더(밑줄) 뒤의 ID 줄만 센다
+  let n = 0, inNotam = false, hasArea = false;
+  for (let i = lb + 1; i < end; i++) {
+    if (/^\s*=+\s*$/.test(lines[i])) {
+      // === / 제목 / === (사이에 페이지 꼬리말이 낄 수 있음) — 파서의 섹션 인식과 같은 규칙
+      let j = i + 1; while (j < end && LIDO_SKIP(lines[j])) j++;
+      let k = j + 1; while (k < end && LIDO_SKIP(lines[k])) k++;
+      if (lines[j]?.trim() && !/^\s*=+\s*$/.test(lines[j]) && /^\s*=+\s*$/.test(lines[k] || '')) { inNotam = lidoKind(lines[j].trim()) !== null; hasArea = false; i = k; }
+      continue;
+    }
+    if (LIDO_SKIP(lines[i])) continue;
+    // 영역 밑줄: 바로 위(꼬리말 건너뛴) 줄과 길이가 같고 그 줄이 열 0에서 시작
+    if (/^-{4,}\s*$/.test(lines[i])) { let p = i - 1; while (p > lb && LIDO_SKIP(lines[p])) p--; if (Math.abs(lines[i].trimEnd().length - lines[p].trimEnd().length) <= 1 && lines[p].trim() && !/^-{4,}/.test(lines[p])) hasArea = true; } // 들여쓴 소구역 이름으로 시작하는 섹션도 영역
+    if (inNotam && hasArea && /^[A-Z0-9]{1,8}\/\d{2}(?:\s+VALID:.*)?\s*$/.test(lines[i])) n++;
+  }
+  return n;
+}
