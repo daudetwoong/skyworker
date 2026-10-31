@@ -47,7 +47,11 @@
 
 ---
 
-## 2. 현재 상태 — v0.5 (A안 패리티 완료, 2026-10-31 라이브)
+## 2. 현재 상태 — v0.6 (2026-10-31 라이브)
+
+**v0.6 추가**: 국내선 `DOM FLT PLAN` PDF 지원(시각 L→UTC, 지도·SR·FL트레이드는 자료가 없어 숨김) · APMS 브리핑의 `LIDO-NOTAM-BULLETIN` 노탐 파싱(v0.5까지는 국제선 APMS PDF의 NOTAM 카드가 비어 있었음). 실PDF 10개(국제선 8·국내선 2) 헤드리스 E2E 콘솔 에러 0, 테스트 122개.
+
+### v0.5 (A안 패리티)
 
 브리핑 PDF(54쪽, 회사 CFP 양식) 하나를 끌어다 놓으면 아래 13개 카드가 자동 구성된다. 전부 기기 안에서 처리(서버 전송 없음).
 
@@ -67,7 +71,7 @@
 | 교체공항 · OFP 원문 | ALTN 요약표 · 원문 전체 |
 | 공통 | 📋 요약 복사·🖨️ 인쇄, 카드 켜고끄기·접기 기억, 다크/라이트, 한/영 토글(영어는 뼈대), 새 버전 안내 띠, 카드별 "이 칸은 뭐예요?", 오프라인 스냅샷, 보조 탭 "공항"(임의 ICAO 조회) |
 
-**검증 상태**: 로직 테스트 106개(`node tests/run.js`), 코드 리뷰어 2차까지 반영, 실PDF 헤드리스 E2E(콘솔 에러 0), 프로덕션 동일 확인.
+**검증 상태(v0.5 시점)**: 로직 테스트 106개(`node tests/run.js`), 코드 리뷰어 2차까지 반영, 실PDF 헤드리스 E2E(콘솔 에러 0), 프로덕션 동일 확인.
 
 **제외(사유 명시)**: MEL 바로 보기 — 회사 MEL 자료 재배포라 공개판 금지(R2) / FIR 경계 폴리곤 — 쓸 수 있는 공개 라이선스 데이터 없음(진입점 마커로 대체) / ETP — 해당 기종 비행에 없음 / 주기장·인천 운항이력 — data.go.kr 키(ICN_KEY)를 skyworker-wx Worker 비밀값으로 다시 넣어야 함(키는 형님만 가짐).
 
@@ -77,12 +81,12 @@
 
 ```
 index.html            셸(헤더 Z/L·새로고침·테마·언어, 탭 내비행/공항)
-sw.js                 서비스워커 — CACHE_VERSION 'skyworker-v0.5.0' (화면 바뀌면 반드시 bump)
+sw.js                 서비스워커 — CACHE_VERSION 'skyworker-v0.6.0' (화면 바뀌면 반드시 bump)
 manifest.webmanifest  PWA
 src/app.js            메인(카드 렌더·상태·GPS·할 일·연료·지도 호출) — 가장 큼
-src/ofp.js            OFP 파서: CFP(FLIGHT RELEASE, 실물 PDF) → APMS(OFP 4:…) → ICAO FPL 폴백. 항법로그(좌표·SR·FIR·누적연료)·바람 매트릭스·연료·시각(로컬 오프셋)
+src/ofp.js            OFP 파서: 국내선 DOM → CFP(FLIGHT RELEASE) → APMS(OFP 4:…) → ICAO FPL 폴백. 항법로그(좌표·SR·FIR·누적연료)·바람 매트릭스·연료·시각(로컬 오프셋)
 src/fltrade.js        FL 트레이드(APMS: 마하 역산+성분 계산 / CFP: 매트릭스의 성분 직접 합산)
-src/notam.js          NOTAM 패키지 파서·유효 판정·한국어 해설·좌표/구역·경로 관련도·유사 콜사인·FMS 좌표
+src/notam.js          NOTAM 파서(CFP NOTAM PACKAGE + APMS LIDO-NOTAM-BULLETIN)·유효 판정·한국어 해설·좌표/구역·경로 관련도·유사 콜사인·FMS 좌표
 src/fpl.js            ICAO FPL 풀이
 src/map.js            Leaflet 지도(해안선 vendor/coastline.json, OSM 토글, 레이어, destroyMap/resetMapView)
 src/pdfread.js        pdf.js로 PDF→텍스트 (글자 좌표로 고정폭 줄 재구성 — 매트릭스 이름줄의 선행공백이 이것에 의존)
@@ -114,7 +118,7 @@ context-notes.md      결정·함정 기록(시간순)
 
 ## 5. 꼭 알아야 할 함정 (이미 겪은 것)
 
-- 같은 아시아나라도 OFP 양식이 2종: APMS(`OFP 4:0026Z`, 2줄 항법로그, 매트릭스 ddsssMtt) / **CFP(`FLIGHT RELEASE`, 3줄 항법로그, FL행 매트릭스에 성분·온도 미리 계산)**. 실물 브리핑 PDF는 CFP. 둘 다 지원 유지.
+- 같은 아시아나라도 OFP 양식이 3종(국내선 `DOM FLT PLAN & RLS SHEET` 추가 — 1장·1줄 항법로그·좌표 없음·시각 L표기). 노탐도 2종: CFP=`NOTAM PACKAGE`, APMS=`LIDO-NOTAM-BULLETIN`. 국제선 기존 2종: APMS(`OFP 4:0026Z`, 2줄 항법로그, 매트릭스 ddsssMtt) / **CFP(`FLIGHT RELEASE`, 3줄 항법로그, FL행 매트릭스에 성분·온도 미리 계산)**. 실물 브리핑 PDF는 CFP. 둘 다 지원 유지.
 - FL 트레이드는 "바람·온도만 반영한 시간 비교". 연료는 수치 금지(추세만). 실OFP 대조: APMS 53/52분, CFP 141/140분.
 - Leaflet: 레이어 추가 전 `setView` 필수, 지도는 DOM에 붙은 뒤 초기화, `render()`마다 `destroyMap`으로 리스너 해제, 타일 토글 시 attribution 컨트롤 제거.
 - AWC(aviationweather.gov)는 ID 많으면 TAF 504 → METAR(≤20)/TAF(≤8) 분리 + 요청별 12초 타임아웃 + `Promise.allSettled`. Worker도 9초 상류 타임아웃.
@@ -122,13 +126,14 @@ context-notes.md      결정·함정 기록(시간순)
 - 홀딩 가능 분은 F-RSV(최종예비 30분 연료)로 유량 역산 — 회사 성능표 없이 OFP 수치만.
 - NOTAM 유효 판정: 출발=ETD, 도착·교체=ETA, FIR/ERA=비행창, FIR 통과시각=지연 반영 ETD+경로점 누적시간 ±30분.
 - 유사 콜사인은 회사 공지 블록(`[ SIMILAR CALL SIGNS]`)에서 내 편명과 1자리 차이·자리바꿈만 경고.
+- **실PDF는 ~/Downloads/flight-briefing-pdfs/ 10개 전부로 E2E 할 것**(v0.5는 1개로만 해서 APMS 노탐·국내선 전체가 안 되는 걸 놓쳤다). 국내선 PDF는 글자 단위 텍스트라 pdfread의 붙이기 규칙에 의존.
 - 과거 실패: v0.2는 친절모드 기능 없이 FL트레이드만 만들어 "쓸모없다" 판정 — 원인은 기존 기능 목록을 체크리스트로 안 박고 시작한 것.
 
 ---
 
 ## 6. 남은 백로그 (우선순위 순)
 
-1. **실비행 피드백 반영** — 형님이 다음 비행 OFP로 써보고 어긋나는 것(파싱 누락·시각·FL 수치·노탐 분류)부터 수정. 가장 중요.
+1. **실비행 피드백 반영** — 형님이 다음 비행 OFP로 써보고 어긋나는 것(파싱 누락·시각·FL 수치·노탐 분류)부터 수정. 가장 중요. (v0.6에서 보관 PDF 10개는 자체 점검 완료)
 2. 디자인 다듬기 — 친절모드 대비 "구리다"는 느낌을 없애기(형님 취향: 손그림·따뜻한 무드 아이콘, 콕핏용 야간 기본은 유지).
 3. 주기장·인천 운항이력(ICN_KEY를 Worker 비밀값으로 받으면 proxy에 data.go.kr 경로 추가 — 코드는 우리 것으로 새로 작성).
 4. KE(대한항공) OFP 파서 — 샘플 PDF 필요. 범용 폴백(ICAO FPL)은 이미 동작.

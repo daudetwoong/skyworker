@@ -11,7 +11,7 @@ export function notamTs(s) {
 export function parseNotamPackage(text) {
   const lines = text.replace(/\r/g, '').split('\n');
   let start = lines.findIndex((l) => /^\s*NOTAM\s+PACKAGE\s*\d/.test(l));
-  if (start < 0) return null;
+  if (start < 0) return parseLidoBulletin(lines);
   const sections = [];
   let sec = null, cat = null, cur = null;
   const flush = () => { if (cur) { finalize(cur); sec.items.push(cur); cur = null; } };
@@ -44,10 +44,96 @@ export function parseNotamPackage(text) {
   return items.length ? { sections, items } : null;
 }
 
+// ── LIDO-NOTAM-BULLETIN (APMS 브리핑에 붙는 양식) ──
+// 구조: ===/제목/=== 섹션 → "ICAO /IATA 이름" 또는 "RKRR  INCHEON FIR" 영역 헤더(+아래 ---- 줄) → "+++ 분류 +++" → "ID/yy [VALID: yymmddhhmm - yymmddhhmm]" 아이템 + 들여쓴 본문
+const LIDO_MON = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
+function lidoStamp(s) { // 2604230730 → 23APR26 07:30
+  const m = String(s || '').match(/^(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})$/);
+  const mon = m ? LIDO_MON[+m[2] - 1] : null;
+  return mon ? `${m[3]}${mon}${m[1]} ${m[4]}:${m[5]}` : s; // 월이 이상하면 원문 그대로(유효 판정은 상시로 떨어짐)
+}
+function lidoKind(title) {
+  if (/^DEPARTURE AIRPORT/.test(title)) return 'DEP';
+  if (/^DESTINATION AIRPORT/.test(title)) return 'DEST';
+  if (/^DESTINATION ALTERNATE/.test(title)) return 'ALTN';
+  if (/^ENROUTE AIRPORT/.test(title)) return 'ERA';
+  if (/AREA|FIR/.test(title)) return 'FIR';
+  return null; // CREW ALERT / CREW BULLETIN 등은 노탐이 아님
+}
+const LIDO_SKIP = (l) => /^\s*Page\s+\d+\s+of\s+\d+\s*$/.test(l) || /^\s*[A-Z]{2}\s*\d{1,4}\/\d{2}\s+[A-Z][a-z]{2}\/[A-Z]{3}-[A-Z]{3}\s*$/.test(l);
+export function parseLidoBulletin(lines) {
+  const start = lines.findIndex((l) => /LIDO-NOTAM-BULLETIN/.test(l));
+  if (start < 0) return null;
+  const sections = [];
+  let kind = null, sec = null, cat = null, cur = null, sub = null;
+  const flush = () => {
+    if (!cur) return;
+    // AIP SUP처럼 VALID 없이 본문에 "VALIDITY: 05FEB26 1500 - 31JUL26 2200" 꼴이 있으면 그걸 유효기간으로
+    if (!cur.from) {
+      const v = cur.lines.join(' ').match(/VALIDITY\s*:\s*(\d{2}[A-Z]{3}\d{2})(?:\s+(\d{2})(\d{2})(?:UTC|Z)?)?\s*-\s*(?:(\d{2}[A-Z]{3}\d{2})(?:\s+(\d{2})(\d{2}))?|(UFN|PERM))/);
+      if (v) { cur.from = `${v[1]} ${v[2] || '00'}:${v[3] || '00'}`; cur.to = v[7] || `${v[4]} ${v[5] || '00'}:${v[6] || '00'}`; }
+    }
+    cur.lines = cur.lines.filter((l) => !/^\s*[+-]{5,}.*[+-]{5,}\s*$/.test(l) && !/^\s*-{5,}\s*$/.test(l)); // 회사 공지 장식선 제거
+    finalize(cur); sec.items.push(cur); cur = null;
+  };
+  // 페이지 머리말/꼬리말을 건너뛴 다음 줄
+  const nextOf = (i) => { let j = i + 1; while (j < lines.length && LIDO_SKIP(lines[j])) j++; return [lines[j] || '', j]; };
+  for (let i = start + 1; i < lines.length; i++) {
+    const line = lines[i];
+    if (/END OF LIDO-NOTAM-BULLETIN/.test(line)) break;
+    if (LIDO_SKIP(line)) continue;
+    if (!line.trim()) { if (cur) cur.lines.push(''); continue; }
+    const [next, ni] = nextOf(i);
+    // 섹션: ==== / 제목 / ====
+    if (/^\s*=+\s*$/.test(line)) {
+      const [close, ci] = nextOf(ni); // 제목과 닫는 === 사이에 페이지 꼬리말이 끼어도 인식
+      if (/^\s*=+\s*$/.test(close) && next.trim() && !/^\s*=+\s*$/.test(next)) {
+        flush(); kind = lidoKind(next.trim()); sec = null; cat = null; sub = null; i = ci;
+      }
+      continue;
+    }
+    if (!kind) continue;
+    // 영역 헤더: 다음 줄이 열 0부터 시작하는 ---- 이면 (공항 "ZBAA /PEK  BEIJING..." · FIR "RKRR  INCHEON FIR" · 소구역 "   R108B/ANHEUNG AREA")
+    // 회사 공지 본문의 들여쓴 ----- 줄이나 표 괘선은 구분선이 아니다 — 진짜 밑줄은 헤더와 길이가 같다
+    if (/^-{4,}\s*$/.test(next) && !/^\s*-{4,}\s*$/.test(line) && Math.abs(next.trimEnd().length - line.trimEnd().length) <= 1) {
+      flush();
+      const hdr = line.trim();
+      if (/^\s/.test(line) && sec) { sub = hdr; i = ni; continue; } // 들여쓴 소구역 이름은 현재 영역 안의 세부 구역
+      const m = hdr.match(/^([A-Z0-9/]{2,16})\s*(?:\/\s*([A-Z]{3}))?\s*(.*)$/);
+      const icao = m ? m[1] : hdr;
+      const name = (m ? m[3] : '').replace(/\s*-\s*DETAILED INFO.*$/, '').replace(/\s*\/DEST ALTN.*$/, '').trim();
+      sec = { kind, icao, name, info: [], items: [] };
+      sections.push(sec); cat = null; sub = null; i = ni;
+      continue;
+    }
+    if (/^-{4,}\s*$/.test(line)) continue;
+    if (!sec) continue;
+    const catM = line.match(/^\+{3,}\s*(.+?)\s*\+{3,}\s*$/);
+    if (catM) { flush(); cat = catM[1].trim(); continue; }
+    const hdr = line.match(/^([A-Z0-9]{1,8}\/\d{2})(?:\s+VALID:\s*(\d{10})\s*-\s*(\d{10}|UFN|PERM|EST))?\s*$/);
+    if (hdr) {
+      flush();
+      const id = hdr[1];
+      const category = /^CO/.test(id) ? 'COMPANY ADVISORY' : /^SX|^AX/.test(id) ? 'AIP SUPPLEMENT' : (cat || 'OTHER');
+      cur = { kind, airport: sec.icao, category, from: hdr[2] ? lidoStamp(hdr[2]) : null, to: hdr[3] ? lidoStamp(hdr[3]) : 'PERM', icao: sec.icao, id, lines: [], sub };
+      if (sub && kind === 'FIR') cur.lines.push(`${sub}:`);
+      continue;
+    }
+    if (cur) {
+      // 첫 본문 줄이 "0000-0900" 같은 운용시간이면 스케줄로
+      if (!cur.schedule && cur.lines.filter(Boolean).length === (cur.sub && kind === 'FIR' ? 1 : 0) && /^\s*([A-Z]{3}\s)?(\d{2}\s)?\d{4}-\d{4}(\s|,|$)/.test(line)) { cur.schedule = line.trim(); continue; }
+      cur.lines.push(line);
+    } else sec.info.push(line.trim());
+  }
+  flush();
+  const items = sections.flatMap((s) => s.items);
+  return items.length ? { sections, items } : null;
+}
+
 function finalize(n) {
   const body = n.lines.join('\n').trim();
   n.raw = body;
-  const d = body.match(/(?:^|\n)\s*D\)\s*([^\n]+)/); n.schedule = d ? d[1].trim() : null;
+  const d = body.match(/(?:^|\n)\s*D\)\s*([^\n]+)/); n.schedule = d ? d[1].trim() : (n.schedule || null);
   const e = body.match(/(?:^|\n)\s*E\)\s*([\s\S]*?)(?=\n\s*COMMENT\)|\n\s*[A-G]\)|$)/); n.etext = (e ? e[1] : body).replace(/\s+/g, ' ').trim();
   const c = body.match(/COMMENT\)\s*([^\n]+(?:\n(?!\s*[A-Z]\)).*)*)/); n.comment = c ? c[1].replace(/\s+/g, ' ').trim() : null;
   n.fromMs = notamTs(n.from);
@@ -96,6 +182,7 @@ export const CAT_KO = {
   'AIRWAY': '항로', 'AIRSPACE': '공역', 'OTHER': '기타', 'COMPANY ADVISORY': '회사 공지', 'RUNWAY LIGHT': '활주로 등화',
   'DEPARTURE AIRPORT TECHNICAL INFORMATION': '출발공항 기술정보', 'LIGHTING': '등화', 'OBSTACLE': '장애물', 'COMMUNICATION': '통신',
   'SID/STAR': 'SID/STAR', 'MILITARY': '군 활동', 'DANGER AREA': '위험구역',
+  'AIRPORT': '공항', 'APPROACH PROCEDURE': '접근절차', 'AIP SUPPLEMENT': 'AIP 보충판(SUP)', 'AREA': '공역', 'ENROUTE': '항로',
 };
 export const KIND_KO = { DEP: '출발', DEST: '도착', ALTN: '교체', ERA: '항로 교체(ERA)', FIR: 'FIR' };
 
@@ -201,7 +288,10 @@ export function similarCallsigns(text, myCallsign) {
     if (n === my) continue;
     const a = my.split('').sort().join(''), b2 = n.split('').sort().join('');
     let diff = 0; if (n.length === my.length) for (let i = 0; i < n.length; i++) if (n[i] !== my[i]) diff++;
-    if ((n.length === my.length && diff === 1) || a === b2 || my.endsWith(n.slice(-2)) && n.length === my.length) found.add(m[1] + m[2]);
+    // 한 자리 끼어든 꼴(OZ335 ↔ OZ3355): 긴 쪽에서 한 글자 빼면 짧은 쪽
+    const [sh, lg] = n.length < my.length ? [n, my] : [my, n];
+    const oneInserted = lg.length === sh.length + 1 && [...lg].some((_, k) => lg.slice(0, k) + lg.slice(k + 1) === sh);
+    if ((n.length === my.length && diff === 1) || a === b2 || oneInserted || my.endsWith(n.slice(-2)) && n.length === my.length) found.add(m[1] + m[2]);
   }
   return [...found].slice(0, 8);
 }

@@ -235,6 +235,7 @@ function summaryCard() {
     }
     b.append(hero);
     if (m.src === 'ICAO-FPL') b.append(el('div', 'note', t('genericNote')));
+    if (m.src === 'OZ-DOM') b.append(el('div', 'note', t('domNote')));
     if (m._similar?.length) b.append(el('div', 'note warn-note', `🚨 ${t('similarCs')}: ${m._similar.join(', ')}`));
     kv(b, [
       ['STD', m.dep?.std && m.dep.std !== m.dep.etd ? fmtHmZ(m.dep.std, m.dep.tzMin) : null],
@@ -789,7 +790,7 @@ function altnCard() {
   return briefCard('altn', t('cardAltn'), (b) => {
     const tb = el('table', 'data-table');
     const thead = el('tr'); ['ALTN', t('altnRwy'), t('altnDist'), t('altnFl'), t('altnTime'), t('compCol'), t('altnFuel'), t('altnRte')].forEach((h) => thead.append(el('th', null, h))); tb.append(thead);
-    model.altnSummary.forEach((a) => { const tr = el('tr'); tr.append(el('td', null, a.icao), el('td', null, a.rwy), el('td', 'num', a.dist + 'nm'), el('td', 'num', 'FL' + a.fl), el('td', 'num', hm(a.time)), el('td', 'num', (a.comp >= 0 ? '+' : '') + a.comp + 'kt'), el('td', 'num', p100lbs(a.fuel)), el('td', 'rte', a.rte)); tb.append(tr); });
+    model.altnSummary.forEach((a) => { const tr = el('tr'); tr.append(el('td', null, a.icao), el('td', null, a.rwy), el('td', 'num', a.dist + 'nm'), el('td', 'num', 'FL' + a.fl), el('td', 'num', hm(a.time)), el('td', 'num', a.comp == null ? '—' : (a.comp >= 0 ? '+' : '') + a.comp + 'kt'), el('td', 'num', p100lbs(a.fuel)), el('td', 'rte', a.rte)); tb.append(tr); });
     b.append(tb);
   });
 }

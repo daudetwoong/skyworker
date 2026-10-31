@@ -32,6 +32,8 @@
 - [ ] 활주로·접근 브리핑 (TAF → 예상 활주로) — 다음
 - [ ] TOD/강하 계산기 · 홀딩 연료 시계 — 다음
 - [ ] KE 전용 파서 (KE OFP 샘플 입수 후)
+- [x] 국내선 DOM FLT PLAN & RLS SHEET 파서 (L시각→UTC·1줄 항법로그·좌표/바람 없음 안내) — 실PDF 2개 E2E
+- [x] APMS 브리핑의 LIDO-NOTAM-BULLETIN 파서 — 실PDF 8개 전부 NOTAM 카드 채워짐(58~123건)
 
 ## Phase 2.6 — 친절모드 100% 패리티 (A안, 2026-10-31 형님 승인)
 
@@ -70,4 +72,5 @@
 
 - [x] 2026-10-31 code-reviewer 1차: HIGH 3(FPL 중첩괄호·마하레벨·i18n '분')+MEDIUM 4+LOW 5 → 전부 수정, 회귀테스트 7개 추가
 - [x] 2026-10-31 헤드리스 E2E: 붙여넣기→브리핑 7카드·Z/L토글·공항탭, 콘솔에러 0
+- [x] 2026-10-31 실PDF 10개 일괄 E2E(v0.6): 국제선 8개 NOTAM 카드가 비어 있던 것·국내선 2개 업로드 무반응 발견 → 수정, code-reviewer 3차(HIGH 1·MEDIUM 2) 반영, 테스트 122개
 - [x] 2026-10-31 code-reviewer 2차(v0.5): Leaflet attribution 누적·map.remove 누락(HIGH) + idx -1·문장단위 노이즈·i18n·반경우선·F-RSV 파싱 → 전부 수정, 테스트 106개

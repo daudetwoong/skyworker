@@ -203,5 +203,56 @@ ok(areaOf('WITHIN 10NM RADIUS CENTERED 3000N10000E', three)?.type === 'circle', 
 ok(areaOf('AREA BOUNDED BY', three)?.type === 'polygon', '반경 없고 3좌표면 다각형');
 ok(areaOf('PSN 3000N10000E', three.slice(0,1))?.type === 'point', '좌표 1개면 점');
 
+// ── LIDO-NOTAM-BULLETIN 파서 (APMS 브리핑에 붙는 양식) ──
+console.log('[notam] LIDO 게시 양식');
+
+const { NOTAM_LIDO_SAMPLE } = await import('./fixtures/notam_lido_sample.js');
+const lido = parseNotamPackage(NOTAM_LIDO_SAMPLE);
+ok(lido && lido.items.length === 8, '아이템 8건 (CREW ALERT 제외)', lido?.items.map((n) => n.id));
+ok(lido?.sections.map((s) => s.kind + ':' + s.icao).join(',') === 'DEP:RKSI,DEST:VHHH,FIR:RKRR', '섹션 종류·영역', lido?.sections.map((s) => s.kind + ':' + s.icao));
+const l1 = lido?.items.find((n) => n.id === '1A001/26');
+ok(l1?.category === 'APPROACH PROCEDURE' && l1?.from === '22APR26 00:00' && l1?.to === '23APR26 09:00' && l1?.schedule === '0000-0900', 'VALID→유효기간, 첫 줄 운용시간→스케줄', JSON.stringify([l1?.category, l1?.from, l1?.to, l1?.schedule]));
+ok(l1?.etext === 'ILS RWY 15R/33L U/S DUE TO WIP', '본문', l1?.etext);
+const co = lido?.items.find((n) => n.id === 'CO1001/20');
+ok(co?.category === 'COMPANY ADVISORY' && /CONTACT POINT/.test(co?.etext) && /SIMILAR CALL SIGNS/.test(co?.etext) && !/\+\+\+\+/.test(co?.etext), '회사 공지: 들여쓴 구분선 안에서 본문 안 끊김·장식 제거', co?.etext?.slice(0, 120));
+const sx = lido?.items.find((n) => n.id === 'SX18/26');
+ok(sx?.category === 'AIP SUPPLEMENT' && sx?.from === '05FEB26 15:00' && sx?.to === '31JUL26 22:00' && /MAX HEIGHT/.test(sx?.etext) && !/Page 10/.test(sx?.etext), 'AIP SUP: VALIDITY 파싱 + 페이지 꼬리말 건너뜀', JSON.stringify([sx?.from, sx?.to, sx?.etext?.slice(-30)]));
+const d8 = lido?.items.find((n) => n.id === '1D836/26');
+ok(d8?.kind === 'FIR' && d8?.sub === 'R108B/ANHEUNG AREA' && d8?.schedule === '2300-1000' && d8?.from == null && /^R108B/.test(d8?.etext), 'FIR 소구역(꼬리말 사이) + VALID 없음=상시', JSON.stringify([d8?.sub, d8?.schedule, d8?.etext?.slice(0, 40)]));
+const e18 = lido?.items.find((n) => n.id === '1E1807/26');
+ok(e18?.schedule === '23 0730-0930, 24 0230-0430' && e18?.area?.type === 'circle' && Math.abs(e18.area.rNm - 7) < 0.01, 'FIR 날짜별 스케줄 + 원 구역', JSON.stringify([e18?.schedule, e18?.area]));
+ok(similarCallsigns(NOTAM_LIDO_SAMPLE, 'AAR998').includes('OZ9988'), '유사 콜사인: 한 자리 끼어든 꼴(998↔9988)', similarCallsigns(NOTAM_LIDO_SAMPLE, 'AAR998'));
+const footerSplit = NOTAM_LIDO_SAMPLE.replace('===================\nDESTINATION AIRPORT\n===================', '===================\nDESTINATION AIRPORT\n                                                            Page 11 of 32\n                       OZ 998/23 Apr/ICN-HKG\n===================');
+const lf = parseNotamPackage(footerSplit);
+ok(lf?.items.find((n) => n.id === '1E4065/25')?.kind === 'DEST', '섹션 제목과 닫는 === 사이 꼬리말이 끼어도 DEST 유지', lf?.items.find((n) => n.id === '1E4065/25')?.kind);
+const badMon = parseNotamPackage(NOTAM_LIDO_SAMPLE.replace('1A001/26  VALID: 2604220000', '1A001/26  VALID: 2600220000'));
+ok(badMon?.items.find((n) => n.id === '1A001/26')?.from === '2600220000', '월이 이상한 VALID는 원문 유지(JAN으로 바꾸지 않음)', badMon?.items.find((n) => n.id === '1A001/26')?.from);
+
+// ── 국내선 DOM FLT PLAN 파서 ──
+console.log('[ofp] 국내선 DOM FLT PLAN');
+const { OFP_DOM_SAMPLE } = await import('./fixtures/ofp_dom_sample.js');
+const dm = parseOFP(OFP_DOM_SAMPLE);
+ok(dm.ok && dm.src === 'OZ-DOM', '파싱 성공 + DOM 판정', dm.src);
+ok(dm.fltNo === 'OZ8999' && dm.depIcao === 'RKSS' && dm.destIcao === 'RKPC' && dm.reg === 'HL7000' && dm.actype === 'A321-231', '편명·구간·기체', `${dm.fltNo} ${dm.depIcao}-${dm.destIcao} ${dm.reg} ${dm.actype}`);
+ok(dm.dep?.etd === '07.20' && dm.dest?.eta === '08.30' && dm.dep?.tzMin === 540, 'STD/STA L표기 → UTC (ETD 비면 STD)', `${dm.dep?.etd}/${dm.dest?.eta}`);
+ok(dm.etdDate?.toISOString() === '2026-04-17T07:20:00.000Z' && dm.etaDate?.toISOString() === '2026-04-17T08:30:00.000Z', 'ETD/ETA Date', `${dm.etdDate?.toISOString()} ${dm.etaDate?.toISOString()}`);
+ok(dm.plannedFL === 240 && dm.dist?.gnd === 248 && dm.ci === 55, 'FL·거리·CI', `${dm.plannedFL} ${dm.dist?.gnd} ${dm.ci}`);
+ok(dm.fuel?.trip?.v === 55 && dm.fuel?.extra?.extra === 'TKG' && dm.fuel?.ramp?.v === 244 && dm.weights?.tow === 1654, '연료·중량', JSON.stringify([dm.fuel?.trip, dm.fuel?.ramp, dm.weights]));
+ok(dm.remarks?.[0] === '8736 RAMP FUEL 14100LBS', '한 줄 DISP REMARK', dm.remarks);
+ok(dm.altnSummary?.length === 1 && dm.altnSummary[0].icao === 'RKJJ' && dm.altnSummary[0].fl === 80 && dm.altnSummary[0].comp === null, 'ALTN SUMMARY(국내선 열 구성)', JSON.stringify(dm.altnSummary));
+ok(dm.navlog?.length === 5 && dm.navlog[0].point === 'BULTI' && dm.navlog[0].accMin === 12 && dm.navlog[0].comp === 0 && dm.navlog.at(-1).point === 'TEDAN' && dm.navlog.at(-1).accMin === 29, '1줄 항법로그(공항행 제외, 누적시간)', JSON.stringify(dm.navlog?.map((r) => [r.point, r.accMin])));
+ok(dm.navlog?.find((r) => r.point === 'BEDES')?.fl === 240 && dm.navlog?.[0].lat == null, 'FL 숫자화·좌표 없음', dm.navlog?.find((r) => r.point === 'BEDES')?.fl);
+ok(dm.warnings.includes('noWindMatrix') && dm.warnings.includes('noCoords') && dm.route === 'BULTI Y711 DALSU Y253 TEDAN', '경고·FPL 경로', JSON.stringify([dm.warnings, dm.route]));
+ok(flTrade(dm) === null, '바람 매트릭스 없으면 FL 트레이드 없음');
+
+// ── PDF 텍스트 재구성: 글자 단위로 쪼개진 PDF ──
+console.log('[pdfread] 글자 단위 아이템 재구성');
+const { rebuildPage } = await import('../src/pdfread.js');
+const glyphs = (s, x0, y) => [...s].map((ch, i) => ({ str: ch, transform: [1, 0, 0, 1, x0 + i * 6, y], width: ch === ' ' ? 0 : 6 })).filter((g) => g.str !== ' ');
+const pageA = rebuildPage([...glyphs('OZ8735 RKSS/RKJY', 10, 700), ...glyphs('TRIP 0055 00.42', 10, 680)]);
+ok(pageA.split('\n')[0] === 'OZ8735 RKSS/RKJY' && pageA.split('\n')[1] === 'TRIP 0055 00.42', '글자 하나씩 와도 단어로 붙고 공백은 유지', JSON.stringify(pageA));
+const pageB = rebuildPage([{ str: 'TRIP', transform: [1, 0, 0, 1, 10, 700], width: 24 }, { str: '0055', transform: [1, 0, 0, 1, 64, 700], width: 24 }, { str: 'EGOBA', transform: [1, 0, 0, 1, 10, 680], width: 30 }, { str: 'N37 29.2', transform: [1, 0, 0, 1, 100, 680], width: 48 }]);
+ok(/^TRIP\s+0055$/.test(pageB.split('\n')[0]) && /^EGOBA\s{5,}N37 29\.2$/.test(pageB.split('\n')[1]), '단어 단위 PDF는 기존처럼 열 위치 보존', JSON.stringify(pageB));
+
 if (fails) { console.error(`\n${fails}개 실패`); process.exit(1); }
 console.log('\n모든 테스트 통과');

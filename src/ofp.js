@@ -291,10 +291,117 @@ function parseCfp(text, fpl, model) {
   return model.ok;
 }
 
+// ── 국내선 DOM FLT PLAN & RLS SHEET (1장짜리, 1줄 항법로그, 좌표·바람매트릭스 없음, 시각은 L로 표기) ──
+function parseDomNavlog(lines) {
+  const rows = [];
+  for (const line of lines) {
+    const t = line.trim().split(/\s+/);
+    // dist point awy fl [mora] rem/ zt/acc tif/acc [comp] [eet]
+    if (t.length < 7 || !/^\d{1,4}$/.test(t[0]) || !/^[A-Z][A-Z0-9]{1,6}$/.test(t[1]) || !/^(DCT|-|[A-Z]{1,2}\d{1,4}[A-Z]?)$/.test(t[2])) continue;
+    const ri = t.findIndex((x) => /^\d{3,4}\/$/.test(x));
+    if (ri < 0 || !/^\d{1,3}\/\d{4}$/.test(t[ri + 1] || '') || !/^\d{1,3}\/\d{4}$/.test(t[ri + 2] || '')) continue;
+    if (t[2] === '-') continue; // DEP/ARR 행(공항)은 제외 — 경로점만
+    const acc = t[ri + 1].split('/')[1], mm = +acc.slice(2);
+    const comp = t.slice(ri + 3).find((x) => /^[PM]\d{2}$/.test(x));
+    rows.push({
+      lat: null, lon: null, sr: null, dist: +t[0], point: t[1], awy: t[2],
+      fl: /^\d{3}$/.test(t[3]) ? +t[3] : t[3], mc: null, tc: null, gs: null, wind: null,
+      comp: comp ? (comp[0] === 'M' ? -1 : 1) * +comp.slice(1) : null, tas: null,
+      accMin: mm < 60 ? +acc.slice(0, 2) * 60 + mm : +acc, // ZT/ACTM 누적은 hhmm(0042=42분, 0115=75분). 끝 두 자리 ≥60이면 분 단위로 간주
+      accFuel: +t[ri + 2].split('/')[1], fir: null,
+    });
+  }
+  return rows;
+}
+function parseDom(text, fpl, model) {
+  const rel = text.match(/\b([A-Z]{2}\d{1,4})\s+([A-Z]{4})\/([A-Z]{4})\s+(\d{2})\/([A-Z]{3})\/(\d{2})\s+DOM\s+FLT\s+PLAN/);
+  if (!rel) return false;
+  model.src = 'OZ-DOM';
+  model.fltNo = rel[1]; model.depIcao = rel[2]; model.destIcao = rel[3];
+  model.date = new Date(Date.UTC(2000 + +rel[6], MONTHS[rel[5]] ?? 0, +rel[4]));
+  const head = text.match(new RegExp(rel[1] + '\\s+\\d{2}\\/[A-Z]{3}\\/\\d{4}\\s+([A-Z0-9]{5,7})\\s+([A-Z]-?\\d[A-Z0-9\\-]*)'));
+  if (head) { model.reg = head[1]; model.actype = head[2]; }
+  const ci = text.match(/SPD\s*:\s*CI(\d+)/); if (ci) model.ci = +ci[1];
+  const dl = text.match(/DIST\/FLIGHT LEVEL\s*:\s*(\d{2,5})\/FL(\d{3})/); if (dl) { model.dist = { gnd: +dl[1], air: null }; model.plannedFL = +dl[2]; }
+  // 시각: "GMP/RKSS P0900 : STD/ 16.20L ETD/ ATD- /" — L 표기면 오프셋으로 UTC 환산, ETD 비면 STD 사용
+  const tm = (kind) => {
+    const m = text.match(new RegExp('^\\s*([A-Z]{3})\\/([A-Z]{4})\\s+([PM])(\\d{2})(\\d{2})\\s*:\\s*' + kind[0] + '\\/\\s*(\\d{1,2}[.:]\\d{2})(L?)Z?\\s+' + kind[1] + '\\/\\s*(\\d{1,2}[.:]\\d{2})?(L?)', 'm'));
+    if (!m) return null;
+    const tzMin = (m[3] === 'M' ? -1 : 1) * (+m[4] * 60 + +m[5]);
+    const toZ = (s, local) => { if (!s) return null; let min = hmToMin(s); if (local) min = ((min - tzMin) % 1440 + 1440) % 1440; return `${String(Math.floor(min / 60)).padStart(2, '0')}.${String(min % 60).padStart(2, '0')}`; };
+    const std = toZ(m[6], m[7] === 'L'), est = toZ(m[8], m[9] === 'L' || (m[8] && m[7] === 'L')) || std;
+    return { iata: m[1], icao: m[2], tzMin, std, est };
+  };
+  const d = tm(['STD', 'ETD']), a = tm(['STA', 'ETA']);
+  if (d) model.dep = { iata: d.iata, icao: d.icao, tzMin: d.tzMin, std: d.std, etd: d.est };
+  if (a) model.dest = { iata: a.iata, icao: a.icao, tzMin: a.tzMin, sta: a.std, eta: a.est };
+  parseApmsFuel(text, model);
+  const dr = text.match(/DISP REMARK\s*:\s*([^\n]+)/); if (dr && dr[1].trim()) model.remarks = [dr[1].trim()];
+  const asIdx = text.indexOf('ALTN SUMMARY');
+  if (asIdx >= 0) {
+    model.altnSummary = [];
+    for (const line of text.slice(asIdx, asIdx + 600).split('\n').slice(1)) {
+      const m = line.match(/^\s*([A-Z]{4})\s+(\d+)\s+(\d{3})\s+(\d{1,2}\.\d{2})\s+(\d{3,5})\s+(.+?)\s*$/);
+      if (m) model.altnSummary.push({ icao: m[1], rwy: '—', dist: +m[2], fl: +m[3], time: m[4], comp: null, fuel: +m[5], rte: m[6] });
+      else if (model.altnSummary.length) break;
+    }
+    if (!model.altnSummary.length) delete model.altnSummary;
+  }
+  model.navlog = parseDomNavlog(text.split('\n'));
+  model.windMatrix = null;
+  if (fpl) {
+    model.callsign = fpl.callsign; model.actype = model.actype || fpl.actype; model.reg = model.reg || fpl.reg;
+    model.altn = fpl.altn?.length ? fpl.altn : (model.altnIcao ? [model.altnIcao] : []);
+    model.plannedFL = model.plannedFL || fpl.plannedFL || null;
+    model.route = fpl.route || null; model.eet = fpl.eet || null;
+    model.eetTotal = fpl.eetTotal ? hmToMin(fpl.eetTotal.slice(0, 2) + '.' + fpl.eetTotal.slice(2)) : null;
+  } else { model.callsign = model.fltNo.replace(/^OZ/, 'AAR').replace(/^KE/, 'KAL'); model.altn = model.altnIcao ? [model.altnIcao] : []; }
+  if (!model.route) { const rt = text.match(new RegExp('^\\s*' + model.depIcao + '\\s+(.+?)\\s+' + model.destIcao + '\\s*:', 'm')); if (rt) model.route = rt[1].trim(); }
+  setDates(model);
+  model.ok = !!(model.depIcao && model.destIcao && model.fuel);
+  model.warnings.push('noWindMatrix', 'noCoords');
+  return model.ok;
+}
+function setDates(model) {
+  if (!(model.date && model.dep?.etd)) return;
+  const [h, mi] = model.dep.etd.split(/[.:]/).map(Number);
+  model.etdDate = new Date(model.date.getTime() + (h * 60 + mi) * 60000);
+  if (model.dest?.eta) {
+    const [h2, m2] = model.dest.eta.split(/[.:]/).map(Number);
+    let eta = new Date(model.date.getTime() + (h2 * 60 + m2) * 60000);
+    if (eta < model.etdDate) eta = new Date(eta.getTime() + 86400000);
+    model.etaDate = eta;
+  }
+}
+// APMS·DOM 공용 연료표(100LBS)·중량
+function parseApmsFuel(text, model) {
+  const fuel = {};
+  const fr = (name, re) => { const m = text.match(re); if (m) fuel[name] = { v: parseInt(m[1], 10), time: m[2] || null, extra: m[3] || null }; };
+  fr('trip', /^\s*TRIP\s+(\d{3,5})\s+(\d{1,2}\.\d{2})/m);
+  fr('cont', /^\s*CONT\s+(\d{3,5})\s+(\d{1,2}\.\d{2})/m);
+  const am = text.match(/^\s*ALTN\/([A-Z]{4})\s+(\d{3,5})\s+(\d{1,2}\.\d{2})/m);
+  if (am) { fuel.altn = { v: parseInt(am[2], 10), time: am[3] }; model.altnIcao = am[1]; }
+  fr('frsv', /^\s*F-RSV\s+(\d{3,5})\s+(\d{1,2}\.\d{2})/m);
+  fr('rqrd', /^\s*RQRD\s+(\d{3,5})\s+(\d{1,2}\.\d{2})/m);
+  fr('extra', /^\s*EXTRA\s+(\d{3,5})\s+(\d{1,2}\.\d{2})(?:\s+RSN\/(\S+))?/m);
+  fr('tkof', /^\s*TKOF\s+(\d{3,5})\s+(\d{1,2}\.\d{2})/m);
+  const tx = text.match(/^\s*TAXI\s+(\d{3,5})/m); if (tx) fuel.taxi = { v: parseInt(tx[1], 10) };
+  fr('ramp', /^\s*RAMP\s+(\d{3,5})\s+(\d{1,2}\.\d{2})/m);
+  if (Object.keys(fuel).length) model.fuel = fuel;
+  const w = {};
+  for (const [k, re] of [['tow', /\bTOW\s+(\d{4,5})/], ['ldw', /\bLDW\s+(\d{4,5})/], ['zfw', /\bZFW\s+(\d{4,5})/], ['agtow', /AGTOW\s+(\d{4,5})/]]) {
+    const m = text.match(re); if (m) w[k] = parseInt(m[1], 10);
+  }
+  if (Object.keys(w).length) model.weights = w;
+}
+
 export function parseOFP(raw) {
   const text = raw.replace(/\r/g, '');
   const fpl = parseFplBlock(text);
   const model = { ok: false, src: 'NONE', fpl, warnings: [] };
+
+  // 국내선 DOM FLT PLAN & RLS SHEET
+  if (/DOM\s+FLT\s+PLAN/.test(text) && parseDom(text, fpl, model)) return model;
 
   // CFP 포맷(FLIGHT RELEASE) 우선 — 실제 브리핑 PDF가 이 양식
   if (/FLIGHT RELEASE\s+[A-Z]{3}\d/.test(text) && /RQD TAKEOFF/.test(text)) {
@@ -329,25 +436,8 @@ export function parseOFP(raw) {
   if (dep) model.dep = { iata: dep[1], icao: dep[2], tzMin: (dep[3] === 'M' ? -1 : 1) * (parseInt(dep[4], 10) * 60 + parseInt(dep[5], 10)), std: dep[6], etd: dep[7] };
   if (arr) model.dest = { iata: arr[1], icao: arr[2], tzMin: (arr[3] === 'M' ? -1 : 1) * (parseInt(arr[4], 10) * 60 + parseInt(arr[5], 10)), sta: arr[6], eta: arr[7] };
 
-  // ── 연료 (100LBS 단위) ──
-  const fuel = {};
-  const fr = (name, re) => { const m = text.match(re); if (m) fuel[name] = { v: parseInt(m[1], 10), time: m[2] || null, extra: m[3] || null }; };
-  fr('trip', /^TRIP\s+(\d{3,5})\s+(\d{1,2}\.\d{2})/m);
-  fr('cont', /^CONT\s+(\d{3,5})\s+(\d{1,2}\.\d{2})/m);
-  const am = text.match(/^ALTN\/([A-Z]{4})\s+(\d{3,5})\s+(\d{1,2}\.\d{2})/m);
-  if (am) { fuel.altn = { v: parseInt(am[2], 10), time: am[3] }; model.altnIcao = am[1]; }
-  fr('frsv', /^F-RSV\s+(\d{3,5})\s+(\d{1,2}\.\d{2})/m);
-  fr('rqrd', /^RQRD\s+(\d{3,5})\s+(\d{1,2}\.\d{2})/m);
-  fr('extra', /^EXTRA\s+(\d{3,5})\s+(\d{1,2}\.\d{2})(?:\s+RSN\/(\S+))?/m);
-  fr('tkof', /^TKOF\s+(\d{3,5})\s+(\d{1,2}\.\d{2})/m);
-  const tx = text.match(/^TAXI\s+(\d{3,5})/m); if (tx) fuel.taxi = { v: parseInt(tx[1], 10) };
-  fr('ramp', /^RAMP\s+(\d{3,5})\s+(\d{1,2}\.\d{2})/m);
-  if (Object.keys(fuel).length) model.fuel = fuel;
-  const w = {};
-  for (const [k, re] of [['tow', /\bTOW\s+(\d{4,5})/], ['ldw', /\bLDW\s+(\d{4,5})/], ['zfw', /\bZFW\s+(\d{4,5})/], ['agtow', /AGTOW\s+(\d{4,5})/]]) {
-    const m = text.match(re); if (m) w[k] = parseInt(m[1], 10);
-  }
-  if (Object.keys(w).length) model.weights = w;
+  // ── 연료 (100LBS 단위) · 중량 ──
+  parseApmsFuel(text, model);
 
   // ── 디스패처 비고 ──
   const dr = text.match(/DISP REMARK:\s*\n([\s\S]*?)\n\s*-{6,}/);
@@ -387,16 +477,7 @@ export function parseOFP(raw) {
   }
 
   // ── 시각 Date 합성 ──
-  if (model.date && model.dep?.etd) {
-    const [h, mi] = model.dep.etd.split(/[.:]/).map(Number);
-    model.etdDate = new Date(model.date.getTime() + (h * 60 + mi) * 60000);
-    if (model.dest?.eta) {
-      const [h2, m2] = model.dest.eta.split(/[.:]/).map(Number);
-      let eta = new Date(model.date.getTime() + (h2 * 60 + m2) * 60000);
-      if (eta < model.etdDate) eta = new Date(eta.getTime() + 86400000);
-      model.etaDate = eta;
-    }
-  }
+  setDates(model);
 
   // ── 판정 ──
   if (model.depIcao && model.destIcao && (model.fuel || model.navlog?.length)) { model.ok = true; model.src = 'OZ-APMS'; }

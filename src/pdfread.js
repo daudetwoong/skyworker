@@ -11,7 +11,8 @@ function loadPdfjs() {
 }
 
 // 한 페이지의 textContent 아이템들을 y로 묶고 x로 정렬해 고정폭 레이아웃 비슷하게 복원
-function rebuildPage(items) {
+// (국내선 DOM FLT PLAN처럼 글자 하나하나가 따로 오는 PDF는 간격이 글자폭 미만이면 붙여 쓴다)
+export function rebuildPage(items) {
   const rows = new Map(); // yKey -> [{x, str, w}]
   for (const it of items) {
     if (!it.str || !it.str.trim()) continue;
@@ -28,12 +29,16 @@ function rebuildPage(items) {
   const ys = [...rows.keys()].sort((a, b) => b - a); // PDF 좌표는 위가 큼
   for (const y of ys) {
     const cells = rows.get(y).sort((a, b) => a.x - b.x);
-    let line = '';
+    let line = '', prev = null;
     for (const c of cells) {
       const col = Math.max(0, Math.round((c.x - minX) / cw));
-      if (col > line.length) line += ' '.repeat(col - line.length);
+      const prevEnd = prev ? prev.x + (prev.w || cw * prev.str.length) : null;
+      const glued = prev != null && c.x - prevEnd < cw * 0.45; // 글자 단위로 쪼개진 런 → 공백 없이 이어 붙임
+      if (glued) { /* no-op */ }
+      else if (col > line.length) line += ' '.repeat(col - line.length);
       else if (line.length && !line.endsWith(' ')) line += ' ';
       line += c.str;
+      prev = c;
     }
     lines.push(line.trimEnd());
   }
