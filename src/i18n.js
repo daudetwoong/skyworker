@@ -87,6 +87,7 @@ const DICT = {
     copyBrief: '📋 요약 복사', printBrief: '🖨️ 인쇄', copied: '복사됨',
     tlSr: 'SR 구간',
     fplNone: 'FPL 블록을 찾지 못했습니다',
+    fplTapHint: '궁금한 코드를 누르면 바로 아래에 풀이가 붙습니다. 왼쪽 번호는 항목 설명.', fplOpenAll: '전부 펼치기', fplCloseAll: '전부 접기', tafNoneNow: '지금 시각에 해당하는 TAF 구간 없음 (자세히에서 전체 보기)', flClimb: '상승 중', flDesc: '강하 중',
     mapTiles: '온라인 상세지도 (인터넷 필요)', mapFollow: '내 위치 따라가기',
     similarCs: '유사 콜사인 주의 (회사 공지)', delayAdj: '출발 지연 조정', reset: '초기화', apply: '적용', quickTurn: '퀵턴(복편) 시간대도 보기',
     starred: '중요 노탐', passAt: '통과 예정', passValid: '통과시각 유효', passInactive: '통과시각에는 비활성', notamNoCoord: 'FIR 내·좌표 없음',
@@ -107,6 +108,7 @@ const DICT = {
     turbTitle: '흔들림 보고 → 지도', turbHint: '난기류 보고 텍스트 붙여넣기 (좌표·웨이포인트·FL·LGT/MOD/SEV 인식)', turbMarked: '개 표시됨',
     whereAc: '내 비행기 어디?', acNotFound: '현재 ADS-B에 안 잡힘(지상·전원 꺼짐 가능)',
     tafWinNote: '◀ = ETD/ETA ±1시간에 걸리는 구간 (주황은 TEMPO/BECMG/PROB)',
+    wxMore: '자세히 — 실황 풀이·전체 활주로·전체 TAF·원문', tafAtMine: '내 시각 예보', tafNow: '지금 예보', noRunwayShort: '활주로 미등록 (자세히에서 입력)',
     newVersion: '새 버전이 있습니다 ', reload: '새로고침',
     distTo: '까지', ufn: '추후 통보 시까지', perm: '영구', qtEtd: '복편 ETD (Z)', qtEta: '복편 ETA (Z)',
   },
@@ -174,7 +176,7 @@ const DICT = {
     legendRoute: 'Route', legendSr: 'SR≥4', legendFir: 'FIR entry', legendNotam: 'NOTAM', legendApt: 'Airport',
     actualRamp: 'Actual RAMP fuel', fuelRecalc: 'Recomputes TOW/LDW/FOD vs OFP limits',
     estTow: 'Est. TOW', estLdw: 'Est. LDW', estFod: 'Est. FOD', minLdgFuel: 'Min landing fuel (ALTN+F-RSV)', holdMargin: 'Margin at dest',
-    copyBrief: '📋 Copy summary', printBrief: '🖨️ Print', copied: 'Copied', tlSr: 'SR segment', fplNone: 'No FPL block found', mapTiles: 'Online map tiles', mapFollow: 'Follow me', similarCs: 'Similar callsign', delayAdj: 'Delay', reset: 'Reset', apply: 'Apply', quickTurn: 'Quick-turn window', starred: 'Starred', passAt: 'Passing', passValid: 'active at pass', passInactive: 'inactive at pass', notamNoCoord: 'In FIR · no coords',
+    copyBrief: '📋 Copy summary', printBrief: '🖨️ Print', copied: 'Copied', tlSr: 'SR segment', fplNone: 'No FPL block found', fplTapHint: 'Tap any code to see its meaning right below. Left number = item.', fplOpenAll: 'Expand all', fplCloseAll: 'Collapse all', tafNoneNow: 'No TAF period covers now (see More)', flClimb: 'climbing', flDesc: 'descending', mapTiles: 'Online map tiles', mapFollow: 'Follow me', similarCs: 'Similar callsign', delayAdj: 'Delay', reset: 'Reset', apply: 'Apply', quickTurn: 'Quick-turn window', starred: 'Starred', passAt: 'Passing', passValid: 'active at pass', passInactive: 'inactive at pass', notamNoCoord: 'In FIR · no coords',
     cardTodo: '✅ In-flight to-do', cardNear: '🛬 Nearest airports', helpQ: 'What is this?',
     help_map: 'Offline: route over built-in coastline. Turn on online tiles when connected. Purple = SR≥4, orange = FIR entry, red = active NOTAM on route.',
     help_todo: 'Action sentences (report/request/contact) from dispatch remarks and NOTAM comments, mapped to fixes, plus FIR/SR/TOC/TOD. 50NM alerts with GPS.',
@@ -187,7 +189,7 @@ const DICT = {
     todoNote: 'Times from OFP ETD (+delay).', nearNeedPos: 'Needs a position (GPS or manual fix).', nearNoCoords: 'No airport coordinates yet.', nearNote: 'Direct distance at current GS.',
     holdRate: 'Holding flow (F-RSV)', holdMin: 'Holding (plan FOD)', holdMinEst: 'Holding (est. FOD)', curFob: 'Current FOB', remainTrip: 'Remaining trip fuel', fobNeedPos: 'Pick a position to compute remaining fuel.',
     turbTitle: 'Turbulence reports → map', turbHint: 'Paste turbulence report text', turbMarked: 'marked', whereAc: 'Where is my aircraft?', acNotFound: 'Not on ADS-B now',
-    tafWinNote: '◀ = within ETD/ETA ±1h (amber = TEMPO/BECMG/PROB)', newVersion: 'New version available ', reload: 'Reload', distTo: 'to', ufn: 'until further notice', perm: 'permanent', qtEtd: 'Return ETD (Z)', qtEta: 'Return ETA (Z)',
+    tafWinNote: '◀ = within ETD/ETA ±1h (amber = TEMPO/BECMG/PROB)', wxMore: 'More — decode, all runways, full TAF, raw', tafAtMine: 'TAF at my time', tafNow: 'TAF now', noRunwayShort: 'No runway data (enter in More)', newVersion: 'New version available ', reload: 'Reload', distTo: 'to', ufn: 'until further notice', perm: 'permanent', qtEtd: 'Return ETD (Z)', qtEta: 'Return ETA (Z)',
   },
 };
 

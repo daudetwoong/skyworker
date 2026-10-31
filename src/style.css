@@ -213,3 +213,40 @@ body[data-theme="light"] .swmap-tip { color:#1f2937; text-shadow:0 0 3px #fff,0 
 .banner button { background:#fff; color:#7c2d12; border:0; border-radius:8px; padding:6px 10px; font-weight:800; }
 .update-bar { position:sticky; top:0; z-index:2000; background:var(--accent); color:#fff; padding:8px 14px; font-size:13.5px; font-weight:700; display:flex; gap:10px; align-items:center; justify-content:center; }
 .update-bar button { background:#fff; color:var(--accent); border:0; border-radius:8px; padding:4px 10px; font-weight:800; }
+
+/* 공항 기상: 한눈에 (v0.7) */
+.wx-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(300px,100%),1fr)); gap:10px; }
+.card.wxc { padding:11px 13px; margin-top:0 !important; }
+.wxc .card-head { margin-bottom:4px; flex-wrap:wrap; gap:6px; }
+.wxc .card-head .icao { font-size:15.5px; }
+.wxc .card-head .updated { margin-left:auto; font-size:11.5px; color:var(--sub); }
+.wxc .fltcat { font-size:11px; padding:1px 7px; margin-left:0; }
+.wx-line { font-size:14px; font-weight:600; line-height:1.45; cursor:pointer; font-variant-numeric:tabular-nums; }
+.wx-rwy { display:flex; flex-wrap:wrap; gap:5px; margin:5px 0 2px; }
+.rwy-chip { font-size:12px; background:var(--chip); border-radius:7px; padding:2px 8px; }
+.rwy-chip b { font-family:ui-monospace,Menlo,monospace; margin-right:2px; }
+.rwy-chip.tw { color:var(--bad); }
+.wx-taf { margin-top:5px; font-size:12.5px; line-height:1.45; }
+.taf-lbl { font-size:10.5px; font-weight:700; color:var(--sub); letter-spacing:.5px; }
+.taf-mini { padding:1px 0; } .taf-mini b { color:var(--accent); font-size:11.5px; }
+.taf-mini.taf-warn { background:#78350f33; border-radius:5px; padding:1px 5px; }
+.wx-more { margin-top:5px; } .wx-more > summary { font-size:11.5px; color:var(--accent); cursor:pointer; }
+/* FPL 원문 주석 */
+.fpl-bar { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin:4px 0 6px; }
+.fpl-bar .sub-line { flex:1; min-width:200px; }
+.fpl-anno { font-family:ui-monospace,Menlo,monospace; font-size:13px; }
+.fl-row { display:grid; grid-template-columns:40px 1fr; gap:6px; align-items:start; padding:3px 0; border-top:1px dashed var(--line); }
+.fl-row:first-child { border-top:none; }
+.fl-item { font:inherit; font-size:10.5px; color:var(--sub); background:var(--chip); border:1px solid var(--line); border-radius:6px; padding:6px 0; cursor:pointer; touch-action:manipulation; }
+.fl-item.on { color:var(--ink); border-color:var(--accent); }
+.fl-code { line-height:1.9; word-break:break-word; }
+.fl-dash { color:var(--sub); }
+.fl-tok { font:inherit; color:var(--ink); background:none; border:none; border-bottom:1px dotted var(--sub); padding:5px 3px; margin:0 1px; touch-action:manipulation; margin:0; cursor:pointer; border-radius:3px; }
+.fl-tok:hover { background:var(--chip); }
+.fl-tok.on { background:color-mix(in srgb, var(--accent) 25%, transparent); border-bottom-color:var(--accent); }
+.fl-notes { margin-left:46px; }
+.fl-note { font-family:system-ui,-apple-system,sans-serif; font-size:12.5px; background:var(--chip); border-left:3px solid var(--accent); border-radius:0 7px 7px 0; padding:4px 9px; margin:3px 0; cursor:pointer; }
+.fl-note b { font-family:ui-monospace,Menlo,monospace; color:#fde68a; margin-right:4px; }
+body[data-theme="light"] .fl-note b { color:#92400e; }
+.fl-note-title { border-left-color:var(--sub); color:var(--sub); }
+@media print { .fl-tok { border-bottom:none; padding:0; } .fl-note { break-inside:avoid; } .disclaimer { display:block !important; } }

@@ -254,5 +254,37 @@ ok(pageA.split('\n')[0] === 'OZ8735 RKSS/RKJY' && pageA.split('\n')[1] === 'TRIP
 const pageB = rebuildPage([{ str: 'TRIP', transform: [1, 0, 0, 1, 10, 700], width: 24 }, { str: '0055', transform: [1, 0, 0, 1, 64, 700], width: 24 }, { str: 'EGOBA', transform: [1, 0, 0, 1, 10, 680], width: 30 }, { str: 'N37 29.2', transform: [1, 0, 0, 1, 100, 680], width: 48 }]);
 ok(/^TRIP\s+0055$/.test(pageB.split('\n')[0]) && /^EGOBA\s{5,}N37 29\.2$/.test(pageB.split('\n')[1]), '단어 단위 PDF는 기존처럼 열 위치 보존', JSON.stringify(pageB));
 
+// ── v0.7: 공항 기상 요약 · FPL 원문 주석 ──
+console.log('[wx] 한 줄 요약·활주로 요약');
+const { metarShort, bestRunways } = await import('../src/wx.js');
+const ms = metarShort({ wdir: 290, wspd: 7, visib: '6+', rawOb: 'METAR RKSI 301830Z 29007KT 8000 FEW035 14/12 Q1017 NOSIG', clouds: [{ cover: 'FEW', base: 3500 }], temp: 14, dewp: 12, altim: 1017 });
+ok(ms === '290° 7kt · 8km · FEW 3,500ft · 14/12°C · Q1017 · NOSIG', 'METAR 한 줄', ms);
+ok(metarShort({ wdir: 200, wspd: 4, rawOb: 'METAR RKSS 010000Z 20004KT CAVOK 17/09 Q1015', clouds: [], temp: 17, dewp: 9, altim: 1015 }).startsWith('200° 4kt · CAVOK · 17/9°C'), 'CAVOK는 짧게');
+const br = bestRunways([{ rwy: '33R', head: 6, cross: 4, side: 'L' }, { rwy: '33L', head: 6, cross: 4, side: 'L' }, { rwy: '15L', head: -6, cross: 4, side: 'R' }, { rwy: '34R', head: 5, cross: 5, side: 'L' }]);
+ok(br.length === 2 && br[0].rwys.join('·') === '33R·33L' && br[1].rwys[0] === '34R', '평행 활주로 묶고 정풍 큰 순서 2개', JSON.stringify(br));
+console.log('[fpl] 원문 주석');
+const { annotateFpl } = await import('../src/fpl.js');
+const an = annotateFpl(OFP_CFP_SAMPLE, { wpt: (n) => (n === 'OLMEN' ? 'T+0:20 · FL351' : null) });
+ok(an?.map((l) => l.item).join(',') === '7·8,9·10,13,15,16,18', '항목 줄 구성', an?.map((l) => l.item));
+const tok = (item, text) => an.find((l) => l.item === item)?.toks.find((x) => x.text === text);
+ok(/RVSM/.test(tok('9·10', 'W')?.note) && /CPDLC/.test(tok('9·10', 'J3')?.note), '장비 코드 하나씩 풀이', tok('9·10', 'W')?.note);
+ok(/T\+0:20/.test(tok('15', 'OLMEN')?.note) && /항로/.test(tok('15', 'Y722')?.note) && /직항/.test(tok('15', 'DCT')?.note), '경로: 웨이포인트(항법로그 연동)·항로·DCT', JSON.stringify([tok('15', 'OLMEN')?.note, tok('15', 'Y722')?.note]));
+ok(/RNAV 10/.test(tok('18', 'A1')?.note) && /홍콩/.test(tok('18', 'VHHK0205')?.note) && /TCAS/.test(tok('18', 'RMK/TCAS II EQUIPPED')?.note), 'Item 18: PBN 코드별·EET FIR별·RMK', JSON.stringify([tok('18', 'A1')?.note, tok('18', 'VHHK0205')?.note]));
+const joined = an.map((l) => l.toks.map((x) => x.text).join('')).join('\n');
+ok(joined.includes('A21N/M-SDE2E3FGHIJ3J7M3P2RWXYZ/LB1D1'), '토큰을 이어 붙이면 원문 그대로', joined.split('\n')[1]);
+const dmA = annotateFpl(OFP_DOM_SAMPLE);
+ok(dmA?.find((l) => l.item === '16')?.toks.some((x) => x.text === 'RKJJ' && /교체/.test(x.note)), '국내선 FPL도 주석', dmA?.map((l) => l.item));
+
+console.log('[v0.7 리뷰 반영]');
+const usM = metarShort({ wdir: 310, wspd: 12, visib: '10+', rawOb: 'METAR KJFK 311851Z 31012KT 10SM FEW250 12/M02 A3005', clouds: [{ cover: 'FEW', base: 25000 }], temp: 12, dewp: -2, altim: 1017.6 });
+ok(usM.endsWith('A30.05') && !usM.includes('Q1018'), '미국식 기압은 A 표기 그대로', usM);
+ok(!metarShort({ rawOb: 'METAR RKSI 010000Z /////KT 9999 NSC', visib: '6+', clouds: [] }).includes('undefined'), '바람 결측이면 생략', metarShort({ rawOb: 'METAR RKSI 010000Z /////KT 9999 NSC', visib: '6+', clouds: [] }));
+ok(bestRunways([{ rwy: '09', head: 10, cross: 30, side: 'L' }, { rwy: '15', head: 9, cross: 3, side: 'R' }])[0].rwy === '15', '측풍 큰 활주로는 뒤로');
+const an2 = annotateFpl('(FPL-AAR1-IS\n-2A320/M-SDFGRWY/LB1\n-RKSI0100\n-N0450F350 DCT SIDAA1A ABC A1 WP900/N0300VFR DCT\n-RJBB0130 RJGG\n-DEP/TEST RFP/Q1 RMK/X)');
+const t2 = (item, text) => an2.find((l) => l.item === item)?.toks.find((x) => x.text === text);
+ok(t2('9·10', '2') && /2대/.test(t2('9·10', '2').note), '항공기 대수 유지');
+ok(/SID/.test(t2('15', 'SIDAA1A')?.note) && /VFR/.test(t2('15', 'N0300VFR')?.note), 'DCT 뒤 첫 절차=SID, VFR 전환', JSON.stringify([t2('15', 'SIDAA1A')?.note, t2('15', 'N0300VFR')?.note]));
+ok(an2.find((l) => l.item === '18').toks.map((x) => x.text).join('') === 'DEP/TEST RFP/Q1 RMK/X', 'Item 18 DEP/RFP 원문 보존', an2.find((l) => l.item === '18').toks.map((x) => x.text).join(''));
+
 if (fails) { console.error(`\n${fails}개 실패`); process.exit(1); }
 console.log('\n모든 테스트 통과');

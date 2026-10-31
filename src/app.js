@@ -1,14 +1,14 @@
 // 메인 앱 — 홈은 "내 비행": OFP PDF → 요약·지도·NOTAM·기상·SR·FL트레이드·타임라인·연료·FPL 카드. 모든 수치 참고용(R3), 기기 안 처리(R4)
 import { t, setLang, lang } from './i18n.js';
 import { getList, addAirport, removeAirport, airportInfo, saveUserRwys } from './airports.js';
-import { fetchWx, renderMetarLines, renderTafPeriods, fltCatInfo, obsTimeStr } from './wx.js';
+import { fetchWx, renderMetarLines, renderTafPeriods, fltCatInfo, obsTimeStr, metarShort, bestRunways } from './wx.js';
 import { runwayWind } from './wind.js';
 import { sunTimes } from './sun.js';
 import { timePref, toggleTimePref, fmtTime, fmtHmZ, fmtDayTime, tzOffsetMin } from './time.js';
 import { parseOFP } from './ofp.js';
 import { flTrade } from './fltrade.js';
 import { parseNotamPackage, isActive, activeInWindow, headline, literalKo, glossary, scheduleKo, routeRelation, gcDistNm, CAT_KO, KIND_KO, similarCallsigns, fmsCoord, extractCoords } from './notam.js';
-import { explainFpl, FIR_KO } from './fpl.js';
+import { explainFpl, annotateFpl, FIR_KO } from './fpl.js';
 
 const $ = (sel) => document.querySelector(sel);
 const store = {
@@ -29,6 +29,7 @@ const SR_MIN = 4;
 
 let model = null;       // 파싱된 OFP (+ _flTrade, _leg, _srRuns, _notam)
 let wxCache = { mMap: {}, tMap: {}, fetchedAt: null, stale: false };
+const uiOpen = new Set(); // 렌더 사이에 유지할 펼침 상태(FPL 주석·공항 기상 '자세히')
 let gps = null, gpsWatch = null, gpsTrail = [];
 let mapHost = null;
 
@@ -121,71 +122,92 @@ function airportCard(icao, { removable = false, roleLabel = null, offsetMin = nu
   const taf = wxCache.tMap[icao];
   const info = airportInfo(icao, metar);
   const off = offsetMin != null ? offsetMin : (info.tz ? tzOffsetMin(info.tz) : null);
-  const card = el('div', 'card');
+  const card = el('div', 'card wxc');
   const head = el('div', 'card-head');
   if (roleLabel) head.append(el('span', 'role', roleLabel));
   head.append(el('span', 'icao', icao), el('span', 'apt-name', info.name));
-  if (metar?.fltCat) { const fc = fltCatInfo(metar.fltCat); const chip = el('span', 'fltcat', fc.label); chip.style.background = fc.color; head.append(chip); }
+  if (metar?.fltCat) { const fc = fltCatInfo(metar.fltCat); const chip = el('span', 'fltcat', metar.fltCat); chip.title = fc.label; chip.style.background = fc.color; head.append(chip); }
+  const ot = metar ? obsTimeStr(metar, off) : null;
+  if (ot) head.append(el('span', 'updated', `${ot}${wxCache.stale ? ' ⚠︎' : ''}`));
   if (removable) { const rm = el('button', 'btn-remove', '✕'); rm.title = t('remove'); rm.onclick = () => { removeAirport(icao); card.remove(); }; head.append(rm); }
   card.append(head);
   if (!metar) { card.append(el('div', 'err', t('loadError'))); return card; }
 
-  const mSect = el('div', 'sect');
-  const mTitle = el('div', 'sect-title', t('metar'));
-  const ot = obsTimeStr(metar, off);
-  if (ot) mTitle.append(el('span', 'updated', ` · ${ot}${wxCache.stale ? ' ⚠︎' : ''}`));
-  mSect.append(mTitle);
-  const lines = el('div', 'lines');
-  renderMetarLines(metar).forEach((l) => lines.append(el('div', null, l)));
-  mSect.append(lines);
-  const raw = el('div', 'raw', metar.rawOb);
-  raw.onclick = () => navigator.clipboard?.writeText(metar.rawOb).catch(() => {});
-  mSect.append(raw);
-  card.append(mSect);
+  // 1줄: 실황 요약 (누르면 원문 복사)
+  const wl = el('div', 'wx-line', metarShort(metar)); wl.title = metar.rawOb;
+  wl.onclick = () => navigator.clipboard?.writeText(metar.rawOb).catch(() => {});
+  card.append(wl);
 
-  const wSect = el('div', 'sect');
-  wSect.append(el('div', 'sect-title', t('runwayWind')));
-  if (info.rwys.length) {
-    const rows = runwayWind(info.rwys, info.var, metar.wdir, metar.wspd, metar.wgst);
-    if (rows) {
-      const tb = el('table', 'rwy-table');
-      rows.forEach((r) => {
-        const tr = el('tr');
-        tr.append(el('td', 'rwy', 'RWY ' + r.rwy), el('td', r.head >= 0 ? 'hw' : 'tw', `${r.head >= 0 ? t('headwind') : t('tailwind')} ${Math.abs(r.head)}kt`), el('td', null, `${t('crosswind')} ${r.cross}kt${r.side ? ` (${r.side === 'L' ? t('left') : t('right')})` : ''}`));
-        tb.append(tr);
-      });
-      wSect.append(tb);
-    } else wSect.append(el('div', 'sub-line', metar.wspd ? t('variable') : t('calm')));
-  } else {
+  // 2줄: 유리한 활주로 (정풍 큰 순서 2개, 평행 활주로는 묶음)
+  const rows = info.rwys.length ? runwayWind(info.rwys, info.var, metar.wdir, metar.wspd, metar.wgst) : null;
+  const rl = el('div', 'wx-rwy');
+  if (rows) bestRunways(rows, 2).forEach((g) => {
+    const c = el('span', 'rwy-chip ' + (g.head >= 0 ? 'hw' : 'tw'));
+    c.append(el('b', null, g.rwys.join('·')), document.createTextNode(` ${g.head >= 0 ? t('headwind') : t('tailwind')} ${Math.abs(g.head)} · ${t('crosswind')} ${g.cross}${g.side ? (g.side === 'L' ? t('left') : t('right')) : ''}`));
+    rl.append(c);
+  });
+  else if (info.rwys.length) rl.append(el('span', 'sub-line', metar.wspd ? t('variable') : t('calm')));
+  else rl.append(el('span', 'sub-line', t('noRunwayShort')));
+  card.append(rl);
+
+  // 3줄~: 내 시각(ETD/ETA ±1h)에 걸리는 TAF 구간만. 시각이 없으면 지금 구간
+  const periods = renderTafPeriods(taf, off);
+  const near = (p, ms) => p.fromSec * 1000 <= ms + 3600000 && p.toSec * 1000 >= ms - 3600000;
+  const hit = (p) => near(p, winMs || Date.now());
+  let focus = periods.filter(hit), mine = !!winMs && focus.length > 0;
+  if (!focus.length) focus = periods.filter((p) => near(p, Date.now())); // 계획 시각이 TAF 밖(지난 OFP 등)이면 지금 예보로
+  if (focus.length) {
+    const tl = el('div', 'wx-taf');
+    tl.append(el('span', 'taf-lbl', mine ? t('tafAtMine') : t('tafNow')));
+    focus.forEach((p) => { const r = el('div', 'taf-mini' + (p.change ? ' taf-warn' : '')); r.append(el('b', null, p.kind), document.createTextNode(` ${p.from}→${p.to} · ${p.text}`)); tl.append(r); });
+    card.append(tl);
+  } else card.append(el('div', 'sub-line', periods.length ? t('tafNoneNow') : t('noTaf')));
+
+  // 접힌 상세: 실황 풀이 · 전체 활주로 · 전체 TAF · 원문 · 일출일몰
+  const more = document.createElement('details'); more.className = 'wx-more';
+  more.append(el('summary', null, t('wxMore')));
+  more.open = uiOpen.has('wx:' + icao);
+  more.addEventListener('toggle', () => { if (more.open) uiOpen.add('wx:' + icao); else uiOpen.delete('wx:' + icao); });
+  const mSect = el('div', 'sect'); mSect.append(el('div', 'sect-title', t('metar')));
+  const lines = el('div', 'lines'); renderMetarLines(metar).forEach((l) => lines.append(el('div', null, l))); mSect.append(lines);
+  const raw = el('div', 'raw', metar.rawOb); raw.onclick = () => navigator.clipboard?.writeText(metar.rawOb).catch(() => {}); mSect.append(raw);
+  more.append(mSect);
+
+  const wSect = el('div', 'sect'); wSect.append(el('div', 'sect-title', t('runwayWind')));
+  if (rows) {
+    const tb = el('table', 'rwy-table');
+    rows.forEach((r) => { const tr = el('tr'); tr.append(el('td', 'rwy', 'RWY ' + r.rwy), el('td', r.head >= 0 ? 'hw' : 'tw', `${r.head >= 0 ? t('headwind') : t('tailwind')} ${Math.abs(r.head)}kt`), el('td', null, `${t('crosswind')} ${r.cross}kt${r.side ? ` (${r.side === 'L' ? t('left') : t('right')})` : ''}`)); tb.append(tr); });
+    wSect.append(tb);
+  } else if (info.rwys.length) wSect.append(el('div', 'sub-line', metar.wspd ? t('variable') : t('calm')));
+  else {
     wSect.append(el('div', 'sub-line', t('noRunwayData')));
     const form = el('div', 'rwy-input');
     const inp = el('input'); inp.placeholder = t('rwyPlaceholder');
     const btn = el('button', null, t('saveRunways'));
-    btn.onclick = () => { const rwys = inp.value.split(',').map((s) => s.trim().toUpperCase()).filter((s) => /^\d{2}[LRC]?$/.test(s)); if (rwys.length) { saveUserRwys(icao, rwys); render(); } };
+    btn.onclick = () => { const rw = inp.value.split(',').map((x) => x.trim().toUpperCase()).filter((x) => /^\d{2}[LRC]?$/.test(x)); if (rw.length) { saveUserRwys(icao, rw); render(); } };
     form.append(inp, btn); wSect.append(form);
   }
-  card.append(wSect);
+  more.append(wSect);
 
-  const tSect = el('div', 'sect');
-  tSect.append(el('div', 'sect-title', t('taf')));
-  const periods = renderTafPeriods(taf, off);
+  const tSect = el('div', 'sect'); tSect.append(el('div', 'sect-title', t('taf')));
   if (periods.length) {
     periods.forEach((p) => {
-      const hit = winMs && p.fromSec * 1000 <= winMs + 3600000 && p.toSec * 1000 >= winMs - 3600000;
-      const row = el('div', 'taf-row' + (hit ? (p.change ? ' taf-warn' : ' taf-hit') : ''));
-      const when = el('div', 'taf-when'); when.append(el('div', 'taf-kind', p.kind + (hit ? ' ◀' : '')), document.createTextNode(`${p.from} → ${p.to}`));
+      const h = winMs && hit(p);
+      const row = el('div', 'taf-row' + (h ? (p.change ? ' taf-warn' : ' taf-hit') : ''));
+      const when = el('div', 'taf-when'); when.append(el('div', 'taf-kind', p.kind + (h ? ' ◀' : '')), document.createTextNode(`${p.from} → ${p.to}`));
       row.append(when, el('div', null, p.text)); tSect.append(row);
     });
     if (winMs) tSect.append(el('div', 'sub-line', t('tafWinNote')));
     const rawT = el('div', 'raw', taf.rawTAF); rawT.onclick = () => navigator.clipboard?.writeText(taf.rawTAF).catch(() => {}); tSect.append(rawT);
   } else tSect.append(el('div', 'sub-line', t('noTaf')));
-  card.append(tSect);
+  more.append(tSect);
 
   const lat = info.lat ?? metar.lat, lon = info.lon ?? metar.lon;
   if (lat != null) {
-    const s = sunTimes(new Date(), lat, lon);
-    if (s) { const sSect = el('div', 'sect'); sSect.append(el('div', 'sect-title', t('sun')), el('div', 'sub-line', `${t('sunrise')} ${fmtTime(s.rise, off)} · ${t('sunset')} ${fmtTime(s.set, off)}`)); card.append(sSect); }
+    const sn = sunTimes(new Date(), lat, lon);
+    if (sn) { const sSect = el('div', 'sect'); sSect.append(el('div', 'sect-title', t('sun')), el('div', 'sub-line', `${t('sunrise')} ${fmtTime(sn.rise, off)} · ${t('sunset')} ${fmtTime(sn.set, off)}`)); more.append(sSect); }
   }
+  card.append(more);
   return card;
 }
 
@@ -625,8 +647,10 @@ function wxCardsWrap() {
   return briefCard('wx', t('cardWx'), (b) => {
     applyNotamFlags(model);
     const w = model._win || {};
+    const grid = el('div', 'wx-grid');
     [[model.depIcao, t('depAp'), model.dep?.tzMin, w.etd], [model.destIcao, t('destAp'), model.dest?.tzMin, w.eta], ...(model.altn || []).map((a) => [a, t('altnAp'), null, w.eta])]
-      .filter(([i]) => i).forEach(([icao, role, off, win]) => b.append(airportCard(icao, { roleLabel: role, offsetMin: off, winMs: win || null })));
+      .filter(([i]) => i).forEach(([icao, role, off, win]) => grid.append(airportCard(icao, { roleLabel: role, offsetMin: off, winMs: win || null })));
+    b.append(grid);
   });
 }
 
@@ -765,7 +789,13 @@ function timelineCard() {
   });
 }
 
-// ── FPL 풀이 ──
+// ── FPL 풀이: 원문을 그대로 보여주고, 누른 코드 바로 아래에 주석으로 풀이 ──
+function fplWptNote(name) {
+  const r = (model.navlog || []).find((x) => x.point === name);
+  if (!r) return null;
+  const fl = typeof r.fl === 'number' ? 'FL' + r.fl : r.fl === 'CL' ? t('flClimb') : /^(DC|DSC)$/.test(r.fl) ? t('flDesc') : null;
+  return [r.accMin != null ? 'T+' + hmFromMin(r.accMin) : null, fl, r.sr != null ? 'SR ' + r.sr : null].filter(Boolean).join(' · ') || null;
+}
 function fplCard() {
   const fp = model._fpl;
   return briefCard('fpl', t('cardFpl'), (b) => {
@@ -773,14 +803,49 @@ function fplCard() {
     const caps = el('div', 'fcaps');
     fp.caps.forEach((c) => caps.append(el('span', 'fcap ' + c.cls, (c.cls === 'ok' ? '✅ ' : c.cls === 'warn' ? '⚠️ ' : '') + c.text)));
     b.append(caps);
-    fp.sections.forEach((s) => {
-      const sec = el('div', 'fsec');
-      const h = el('h4', null, s.title); if (s.mono) h.append(el('code', null, s.mono)); sec.append(h);
-      if (s.rows?.length) { const g = el('div', 'frow'); s.rows.forEach(([k, v]) => g.append(el('b', null, k), el('span', null, v))); sec.append(g); }
-      if (s.chips?.length) { const g = el('div', 'fchips'); s.chips.forEach((c) => { const sp = el('span', 'fchip'); sp.append(el('b', null, c.code), c.desc); g.append(sp); }); sec.append(g); }
-      if (s.route) sec.append(el('div', 'raw route', s.route));
-      b.append(sec);
+    const lines = annotateFpl(store.get('sw_ofp_text', ''), { wpt: fplWptNote }) || [];
+    const bar = el('div', 'fpl-bar');
+    bar.append(el('span', 'sub-line', t('fplTapHint')));
+    const allBtn = el('button', 'chip fpl-openall', t('fplOpenAll'));
+    bar.append(allBtn); b.append(bar);
+    const box = el('div', 'fpl-anno');
+    const toggles = []; // [setOn(bool)] — 전부 펼치기/접기용
+    const fk = `fpl:${flightKey(model)}:`;
+    lines.forEach((ln, li) => {
+      const row = el('div', 'fl-row');
+      const notes = el('div', 'fl-notes');
+      // 하나의 버튼 ↔ 하나의 주석. 열린 상태는 uiOpen에 기억해 기상 새로고침(render) 후에도 유지
+      const bind = (btn, key, makeNote, prepend) => {
+        const set = (on) => {
+          if (on === btn.classList.contains('on')) return;
+          btn.classList.toggle('on', on); btn.setAttribute('aria-expanded', on ? 'true' : 'false');
+          if (on) { const n = makeNote(); n.onclick = () => set(false); btn._note = n; prepend ? notes.prepend(n) : notes.append(n); uiOpen.add(key); }
+          else { btn._note?.remove(); btn._note = null; uiOpen.delete(key); }
+        };
+        btn.setAttribute('aria-expanded', 'false');
+        btn.onclick = () => set(!btn.classList.contains('on'));
+        toggles.push(set);
+        if (uiOpen.has(key)) set(true);
+      };
+      const lab = el('button', 'fl-item', ln.item); lab.title = ln.title;
+      const code = el('div', 'fl-code');
+      code.append(el('span', 'fl-dash', li === 0 ? '(' : '-'));
+      ln.toks.forEach((tk, ti) => {
+        if (!tk.note) { code.append(document.createTextNode(tk.text)); return; }
+        const btn = el('button', 'fl-tok', tk.text);
+        code.append(btn);
+        bind(btn, fk + li + ':' + ti, () => { const n = el('div', 'fl-note'); n.append(el('b', null, tk.text), document.createTextNode(' ' + tk.note)); return n; });
+      });
+      row.append(lab, code);
+      box.append(row, notes);
+      bind(lab, fk + li + ':t', () => el('div', 'fl-note fl-note-title', ln.title), true);
     });
+    const anyOpen = () => box.querySelector('.on') != null;
+    const syncAll = () => { allBtn.textContent = anyOpen() ? t('fplCloseAll') : t('fplOpenAll'); };
+    allBtn.onclick = () => { const on = !anyOpen(); toggles.forEach((f) => f(on)); syncAll(); };
+    box.addEventListener('click', () => setTimeout(syncAll, 0));
+    syncAll();
+    b.append(box);
   });
 }
 
@@ -868,7 +933,7 @@ function flightView(container) {
   const bCopy = el('button', 'chip', t('copyBrief'));
   bCopy.onclick = () => navigator.clipboard?.writeText(briefText()).then(() => { bCopy.textContent = t('copied'); setTimeout(() => { bCopy.textContent = t('copyBrief'); }, 1500); }).catch(() => {});
   const bPrint = el('button', 'chip', t('printBrief'));
-  bPrint.onclick = () => { document.querySelectorAll('details.card').forEach((d) => { d.open = true; }); setTimeout(() => window.print(), 100); };
+  bPrint.onclick = () => { expandForPrint(); setTimeout(() => window.print(), 100); };
   const bNew = el('button', 'chip', t('newOfp'));
   bNew.onclick = () => { store.del('sw_ofp_text'); model = null; stopGps(); import('./map.js').then(({ resetMapView }) => resetMapView()).catch(() => {}); render(); };
   actions.append(bCopy, bPrint, bNew);
@@ -928,6 +993,11 @@ function applyStaticText() {
   $('#btnLang').textContent = t('lang'); $('#btnTime').textContent = timePref();
   $('#tabFlight').textContent = t('tabFlight'); $('#tabAirports').textContent = t('tabAirports');
 }
+function expandForPrint() {
+  document.querySelectorAll('details.card, details.wx-more').forEach((d) => { d.open = true; });
+  const fb = document.querySelector('.fpl-openall'); if (fb && !document.querySelector('.fpl-anno .on')) fb.click();
+}
+window.addEventListener('beforeprint', expandForPrint);
 function render() {
   applyStaticText();
   const tab = store.get('sw_tab', 'flight');

@@ -26,7 +26,7 @@ const RADIO = { U: 'UHF 243.0', V: 'VHF 121.5', E: 'ELT' };
 const SURVIVAL = { P: '극지', D: '사막', M: '해상', J: '정글' };
 const JACKET = { L: '조명', F: '형광염료', U: 'UHF', V: 'VHF' };
 export const FIR_KO = { RKRR: '인천', RJJJ: '후쿠오카', RCAA: '타이베이', VHHK: '홍콩', ZJSA: '싼야', VVHM: '호치민', VVHN: '하노이', VLVT: '비엔티안', VTBB: '방콕', ZSHA: '상하이', ZBPE: '베이징', ZGZU: '광저우', ZWUQ: '우루무치', ZLHW: '란저우', ZHWH: '우한', ZPKM: '쿤밍', ZYSH: '선양', ZUCK: '충칭', RPHI: '마닐라', WSJC: '싱가포르', WMFC: '쿠알라룸푸르', WIIF: '자카르타', VYYF: '양곤', UHHH: '하바롭스크', PAZA: '앵커리지', KZAK: '오클랜드 대양', RJTG: '도쿄' };
-const ITEM18 = { STS: '특수 취급', PBN: 'PBN 능력', NAV: '항법 추가', COM: '통신 추가', DAT: '데이터링크', SUR: '감시 추가', DOF: '비행 날짜', REG: '등록부호', EET: 'FIR 통과 경과시간', SEL: 'SELCAL', TYP: '기종', CODE: 'Mode S 주소', DLE: '경로상 지연', OPR: '운항자', ORGN: '발신자', PER: '성능 분류', ALTN: '교체공항', RALT: '항로 교체', TALT: '이륙 교체', RMK: '비고' };
+const ITEM18 = { DEP: '출발지(이름·좌표)', DEST: '목적지(이름·좌표)', RIF: '재허가 경로', RVR: '최소 RVR', RFP: '비행계획 재제출 차수', STS: '특수 취급', PBN: 'PBN 능력', NAV: '항법 추가', COM: '통신 추가', DAT: '데이터링크', SUR: '감시 추가', DOF: '비행 날짜', REG: '등록부호', EET: 'FIR 통과 경과시간', SEL: 'SELCAL', TYP: '기종', CODE: 'Mode S 주소', DLE: '경로상 지연', OPR: '운항자', ORGN: '발신자', PER: '성능 분류', ALTN: '교체공항', RALT: '항로 교체', TALT: '이륙 교체', RMK: '비고' };
 
 function parseFields(p, keys) {
   const rx = new RegExp('\\b(' + keys.join('|') + ')\\/', 'g');
@@ -49,7 +49,7 @@ export function parseFpl(raw) {
   parts.forEach((p, i) => {
     let mm;
     if (i === 0) { mm = p.match(/^FPL-?([A-Z0-9]+)-([IVYZ])([SNGMX])/); if (mm) { r.id = mm[1]; r.rules = mm[2]; r.ftype = mm[3]; } return; }
-    if ((mm = p.match(/^(\d{0,2})([A-Z0-9]{2,4})\/([LMHJ])-([A-Z0-9]+)\/([A-Z0-9]+)$/))) { r.type = mm[2]; r.wake = mm[3]; r.equip = mm[4]; r.surv = mm[5]; return; }
+    if ((mm = p.match(/^(\d{0,2})([A-Z0-9]{2,4})\/([LMHJ])-([A-Z0-9]+)\/([A-Z0-9]+)$/))) { r.count = mm[1] || null; r.type = mm[2]; r.wake = mm[3]; r.equip = mm[4]; r.surv = mm[5]; return; }
     if ((mm = p.match(/^([A-Z]{4})(\d{4})$/)) && !r.dep) { r.dep = mm[1]; r.eobt = mm[2]; return; }
     if ((mm = p.match(/^([NKM]\d{3,4})([FSAM]\d{3,4}|VFR)\s+([\s\S]*)$/))) { r.spd = mm[1]; r.lvl = mm[2]; r.route = mm[3]; return; }
     if ((mm = p.match(/^([A-Z]{4})(\d{4})((?:\s+[A-Z]{4})*)$/)) && r.dep && !r.dest) { r.dest = mm[1]; r.eet = mm[2]; r.altn = mm[3].trim().split(/\s+/).filter(Boolean); return; }
@@ -57,6 +57,97 @@ export function parseFpl(raw) {
     if (/^(E|P|R|S|J|D|A|N|C)\//.test(p)) { r.i19 = parseFields(p, ['E', 'P', 'R', 'S', 'J', 'D', 'A', 'N', 'C']); return; }
   });
   return r;
+}
+
+function item18Desc(k, v) {
+  if (k === 'PBN') return (v.match(/[A-Z]\d/g) || []).map((c) => `${c} ${PBN[c] || ''}`).join(' · ');
+  if (k === 'EET') return (v.match(/[A-Z]{4}\d{4}/g) || []).map((x) => `${x.slice(0, 4)}${FIR_KO[x.slice(0, 4)] ? '(' + FIR_KO[x.slice(0, 4)] + ')' : ''} +${hhmm(x.slice(4))}`).join(', ');
+  if (k === 'DOF') return `20${v.slice(0, 2)}-${v.slice(2, 4)}-${v.slice(4, 6)}`;
+  if (k === 'PER') return `${v} — ${PER[v] || ''}`;
+  if (k === 'SUR') return v.split(/\s+/).map((x) => /^RSP(\d+)$/.test(x) ? `${x} (ADS-C 보고 ${x.slice(3)}초)` : x === '260B' ? '260B (ADS-B DO-260B)' : x).join(', ');
+  if (k === 'DAT') return `${v}${/FANS/i.test(v) ? ' (FANS 1/A: CPDLC·ADS-C)' : ''}`;
+  if (k === 'CODE') return `${v} — Mode S 24비트 주소`;
+  if (k === 'SEL') return `${v} — SELCAL 코드`;
+  if (k === 'STS') return v.split(/\s+/).map((x) => `${x}: ${STS[x] || ''}`).join(', ');
+  if (k === 'RMK' && /TCAS/i.test(v)) return `${v} (공중충돌방지장치 TCAS 장착)`;
+  return v;
+}
+function item19Desc(k, v) {
+  if (k === 'E') return `항속시간 ${v.slice(0, 2)}시간 ${v.slice(2)}분`;
+  if (k === 'P') return v === 'TBN' ? '탑승 인원 TBN' : `탑승 인원 ${v}명`;
+  if (k === 'R') return '비상 무선: ' + v.split('').map((c) => RADIO[c] || c).join(', ');
+  if (k === 'S') return '생존 장비: ' + v.split('').map((c) => SURVIVAL[c] || c).join(', ');
+  if (k === 'J') return '구명조끼: ' + v.split('').map((c) => JACKET[c] || c).join(', ');
+  if (k === 'D') { const mm = v.match(/^(\d+)\s+(\d+)\s*(C)?\s*(.*)$/); return mm ? `구명보트 ${mm[1]}개 · ${mm[2]}명${mm[3] ? ' · 덮개' : ''}${mm[4] ? ' · ' + mm[4] : ''}` : v; }
+  if (k === 'A') return `항공기 색상: ${v}`;
+  if (k === 'N') return `비고: ${v}`;
+  if (k === 'C') return `기장: ${v}`;
+  return v;
+}
+
+// ── 원문 주석 모드: FPL 원문을 항목(줄) 단위로 보여주고, 각 코드를 누르면 바로 아래에 풀이를 단다 ──
+// 반환: [{ item, title, toks:[{text, note?}] }] — note 없는 토큰은 기호(-, /, 공백)
+// opt.wpt(name) → 항법로그 기반 웨이포인트 보충 설명(예: 'T+0:42 · FL350') 또는 null
+const AWY_RX = /^(?:[A-Z]{1,2}\d{1,4}[A-Z]?|U[A-Z]\d{1,4})$/;
+export function annotateFpl(raw, opt = {}) {
+  const f = parseFpl(raw);
+  if (!f) return null;
+  const T = (text, note) => ({ text, note });
+  const S = (text) => ({ text });
+  const lines = [];
+  if (f.id) lines.push({ item: '7·8', title: 'Item 7·8 — 식별부호·비행규칙·비행종류', toks: [S('FPL-'), T(f.id, '콜사인(무선 호출부호). ICAO 3글자 항공사 코드 + 편명'), S('-'), ...(f.rules ? [T(f.rules, `비행규칙: ${RULES[f.rules] || f.rules}`)] : []), ...(f.ftype ? [T(f.ftype, `비행 종류: ${FTYPE[f.ftype] || f.ftype}`)] : [])] });
+  if (f.type) {
+    const toks = [...(f.count ? [T(f.count, `항공기 대수 ${+f.count}대 (편대)`)] : []), T(f.type, '기종 ICAO 코드 (Item 9)'), S('/'), T(f.wake, `후류(Wake) 등급: ${WAKE[f.wake] || f.wake}`), S('-')];
+    codes(f.equip).forEach((c) => toks.push(T(c, `Item 10a 장비 ${c}: ${EQUIP[c] || '사전에 없는 코드'}`)));
+    toks.push(S('/'));
+    codes(f.surv).forEach((c) => toks.push(T(c, `Item 10b 감시 ${c}: ${SURV[c] || '사전에 없는 코드'}`)));
+    lines.push({ item: '9·10', title: 'Item 9·10 — 기종·후류·탑재 장비', toks });
+  }
+  if (f.dep) lines.push({ item: '13', title: 'Item 13 — 출발 공항·EOBT', toks: [T(f.dep, '출발 공항'), T(f.eobt, `EOBT(블록 출발 예정) ${hhmm(f.eobt)}Z`)] });
+  if (f.spd) {
+    const toks = [T(f.spd, `순항 속도 ${speedKo(f.spd)}`), T(f.lvl, `요청 순항고도 ${levelKo(f.lvl)}`)];
+    const rt = f.route.split(/\s+/).filter(Boolean);
+    const firstReal = rt.findIndex((x) => x !== 'DCT');
+    rt.forEach((tk, i) => {
+      toks.push(S(' '));
+      const chg = tk.match(/^([A-Z0-9]+)\/([NKM]\d{3,4})([FSAM]\d{3,4}|VFR)$/);
+      const point = chg ? chg[1] : tk;
+      const extra = opt.wpt ? opt.wpt(point) : null;
+      let note;
+      if (point === 'DCT') note = '직항(Direct) — 다음 지점까지 항로 없이 바로';
+      else if (extra) note = `웨이포인트 ${point} · ${extra}`;
+      else if (/^\d{2,4}[NS]\d{3,5}[EW]$/.test(point)) note = `좌표 지점 ${point}`;
+      else if (/^[A-Z]{2,5}\d[A-Z]$/.test(point)) note = i === firstReal ? `표준 출발 절차(SID) ${point}` : `표준 도착 절차(STAR) ${point}`;
+      else if (AWY_RX.test(point) && i > 0 && i < rt.length - 1) note = `항로(Airway) ${point} — 앞 지점부터 다음 지점까지 이 항로로`;
+      else if (/^[A-Z]{2,3}$/.test(point)) note = `항법시설(VOR/NDB) ${point}`;
+      else note = `웨이포인트 ${point}`;
+      toks.push(T(point, note));
+      if (chg) toks.push(S('/'), T(chg[2] + chg[3], `여기부터 속도·고도 변경: ${speedKo(chg[2])} · ${levelKo(chg[3])}`));
+    });
+    lines.push({ item: '15', title: 'Item 15 — 순항 속도·고도·경로', toks });
+  }
+  if (f.dest) {
+    const toks = [T(f.dest, '목적 공항'), T(f.eet, `총 예상 소요시간(EET) ${hhmm(f.eet)}`)];
+    (f.altn || []).forEach((a, i) => toks.push(S(' '), T(a, `${i ? '제2 ' : ''}교체공항`)));
+    lines.push({ item: '16', title: 'Item 16 — 목적지·총 EET·교체공항', toks });
+  }
+  if (f.i18?.length) {
+    const toks = [];
+    f.i18.forEach(({ k, v }, idx) => {
+      if (idx) toks.push(S(' '));
+      const head = `${ITEM18[k] || k}`;
+      if (k === 'PBN') { toks.push(T('PBN/', `${head} — 아래 코드를 누르면 각각 풀이`)); (v.match(/[A-Z]\d/g) || []).forEach((c) => toks.push(T(c, `PBN ${c}: ${PBN[c] || '사전에 없는 코드'}`))); }
+      else if (k === 'EET') { toks.push(T('EET/', `${head} — 출발 후 각 FIR 경계까지 걸리는 시간`)); (v.match(/[A-Z0-9]{2,5}\d{4}/g) || []).forEach((x, j) => { if (j) toks.push(S(' ')); const nm = x.slice(0, -4); toks.push(T(x, `${nm}${FIR_KO[nm] ? '(' + FIR_KO[nm] + ')' : ''} 진입까지 +${hhmm(x.slice(-4))}`)); }); }
+      else toks.push(T(`${k}/${v}`, `${head} — ${item18Desc(k, v)}`));
+    });
+    lines.push({ item: '18', title: 'Item 18 — 기타 정보', toks });
+  }
+  if (f.i19?.length) {
+    const toks = [];
+    f.i19.forEach(({ k, v }, idx) => { if (idx) toks.push(S(' ')); toks.push(T(`${k}/${v}`, item19Desc(k, v))); });
+    lines.push({ item: '19', title: 'Item 19 — 보충 정보(비상 장비)', toks });
+  }
+  return lines;
 }
 
 // 렌더용 데이터: {caps:[{cls,text}], sections:[{title, mono, rows:[[k,v]], chips:[{code,desc}]}]}
@@ -94,35 +185,7 @@ export function explainFpl(raw) {
     sections.push({ title: 'Item 15 — 순항 속도·고도·경로', mono: f.spd + f.lvl, rows, route: f.route });
   }
   if (f.dest) sections.push({ title: 'Item 16 — 목적지·EET·교체', mono: `${f.dest}${f.eet} ${(f.altn || []).join(' ')}`, rows: [[f.dest, '목적 공항'], [f.eet, `총 예상 소요시간 ${hhmm(f.eet)}`], ...(f.altn || []).map((a, i) => [a, (i ? '제2 ' : '') + '교체공항'])] });
-  if (i18.length) {
-    const rows = i18.map(({ k, v }) => {
-      let d = v;
-      if (k === 'PBN') d = (v.match(/[A-Z]\d/g) || []).map((c) => `${c} ${PBN[c] || ''}`).join(' · ');
-      else if (k === 'EET') d = (v.match(/[A-Z]{4}\d{4}/g) || []).map((x) => `${x.slice(0, 4)}${FIR_KO[x.slice(0, 4)] ? '(' + FIR_KO[x.slice(0, 4)] + ')' : ''} +${hhmm(x.slice(4))}`).join(', ');
-      else if (k === 'DOF') d = `20${v.slice(0, 2)}-${v.slice(2, 4)}-${v.slice(4, 6)}`;
-      else if (k === 'PER') d = `${v} — ${PER[v] || ''}`;
-      else if (k === 'SUR') d = v.split(/\s+/).map((x) => /^RSP(\d+)$/.test(x) ? `${x} (ADS-C 보고 ${x.slice(3)}초)` : x === '260B' ? '260B (ADS-B DO-260B)' : x).join(', ');
-      else if (k === 'DAT') d = `${v}${/FANS/i.test(v) ? ' (FANS 1/A: CPDLC·ADS-C)' : ''}`;
-      else if (k === 'CODE') d = `${v} — Mode S 24비트 주소`;
-      else if (k === 'SEL') d = `${v} — SELCAL 코드`;
-      else if (k === 'STS') d = v.split(/\s+/).map((s) => `${s}: ${STS[s] || ''}`).join(', ');
-      return [k + '/', `${ITEM18[k] ? ITEM18[k] + ' — ' : ''}${d}`];
-    });
-    sections.push({ title: 'Item 18 — 기타 정보', rows });
-  }
-  if (i19.length) {
-    const rows = i19.map(({ k, v }) => {
-      let d = v;
-      if (k === 'E') d = `항속시간 ${v.slice(0, 2)}시간 ${v.slice(2)}분`;
-      else if (k === 'P') d = v === 'TBN' ? '탑승 인원 TBN' : `탑승 인원 ${v}명`;
-      else if (k === 'R') d = '비상 무선: ' + v.split('').map((c) => RADIO[c] || c).join(', ');
-      else if (k === 'S') d = '생존 장비: ' + v.split('').map((c) => SURVIVAL[c] || c).join(', ');
-      else if (k === 'J') d = '구명조끼: ' + v.split('').map((c) => JACKET[c] || c).join(', ');
-      else if (k === 'D') { const mm = v.match(/^(\d+)\s+(\d+)\s*(C)?\s*(.*)$/); d = mm ? `구명보트 ${mm[1]}개 · ${mm[2]}명${mm[3] ? ' · 덮개' : ''}${mm[4] ? ' · ' + mm[4] : ''}` : v; }
-      else if (k === 'A') d = `항공기 색상: ${v}`;
-      return [k + '/', d];
-    });
-    sections.push({ title: 'Item 19 — 보충 정보(비상 장비)', rows });
-  }
+  if (i18.length) sections.push({ title: 'Item 18 — 기타 정보', rows: i18.map(({ k, v }) => [k + '/', `${ITEM18[k] ? ITEM18[k] + ' — ' : ''}${item18Desc(k, v)}`]) });
+  if (i19.length) sections.push({ title: 'Item 19 — 보충 정보(비상 장비)', rows: i19.map(({ k, v }) => [k + '/', item19Desc(k, v)]) });
   return { caps, sections };
 }

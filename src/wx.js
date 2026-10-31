@@ -109,3 +109,31 @@ export function renderTafPeriods(taf, offsetMin) {
     return { fromSec: f.timeFrom, toSec: f.timeTo, change: f.fcstChange || null, from: fmtDayTime(new Date(f.timeFrom * 1000), offsetMin), to: fmtDayTime(new Date(f.timeTo * 1000), offsetMin), kind, text: parts.join(' · ') || '—' };
   });
 }
+
+// 한 줄 요약(조종사 표기): 290° 7kt · 8km · FEW 3,500ft · 14/12°C · Q1017 · NOSIG
+export function metarShort(m) {
+  if (!m) return '';
+  const cavok = m.rawOb && /\bCAVOK\b/.test(m.rawOb);
+  const p = [];
+  if (m.wspd != null) p.push(fmtWind(m.wdir, m.wspd, m.wgst)); // 바람 결측(/////)이면 생략
+  p.push(cavok ? 'CAVOK' : fmtVis(m.rawOb, m.visib));
+  if (m.wxString) p.push(decodeWxString(m.wxString));
+  if (!cavok) {
+    const cl = (m.clouds || []).filter((c) => c.cover).map((c) => c.cover + (c.base != null ? ' ' + c.base.toLocaleString() + 'ft' : '') + (c.type ? ' ' + c.type : ''));
+    if (cl.length) p.push(cl.join(' '));
+  }
+  if (m.temp != null) p.push(`${m.temp}/${m.dewp ?? '—'}°C`);
+  // 기압은 원문 표기 그대로 (Q hPa / A inHg) — 미국식 A3005를 Q로 바꾸지 않는다
+  const q = m.rawOb?.match(/\bQ(\d{4})\b/), a = m.rawOb?.match(/\bA(\d{4})\b/);
+  if (q) p.push('Q' + q[1]); else if (a) p.push(`A${a[1].slice(0, 2)}.${a[1].slice(2)}`); else if (m.altim != null) p.push(`Q${Math.round(m.altim)}`);
+  if (m.rawOb && /\bNOSIG\b/.test(m.rawOb)) p.push('NOSIG');
+  return p.join(' · ');
+}
+
+// 활주로 바람 요약: 같은 값(평행 활주로)을 묶고 정풍이 큰 순서로 n개
+export function bestRunways(rows, n = 2) {
+  if (!rows?.length) return [];
+  const groups = new Map();
+  for (const r of rows) { const k = `${r.head}|${r.cross}|${r.side || ''}`; if (!groups.has(k)) groups.set(k, { ...r, rwys: [] }); groups.get(k).rwys.push(r.rwy); }
+  return [...groups.values()].sort((a, b) => (b.head - b.cross * 0.5) - (a.head - a.cross * 0.5) || a.cross - b.cross).slice(0, n); // 정풍 우선, 측풍은 절반 감점
+}
