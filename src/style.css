@@ -259,3 +259,12 @@ body[data-theme="light"] .fl-note b { color:#92400e; }
 .chk-sum { margin:8px 0 2px; font-size:12.5px; } .chk-sum > summary { cursor:pointer; font-weight:600; }
 .chk-sum.chk-ok > summary { color:var(--good); } .chk-sum.chk-bad > summary { color:#d97706; }
 .chk-row { font-size:12px; padding:2px 0; font-variant-numeric:tabular-nums; } .chk-row-bad { color:#d97706; font-weight:600; }
+
+/* 기기 저장 지키기 (v0.9) */
+.install-note { border-left:3px solid var(--accent); text-align:left; } .install-note b { display:block; margin-bottom:2px; }
+.wipe-hint { margin-top:10px; font-size:12px; }
+.stor-panel { margin:12px 2px 4px; font-size:12.5px; } .stor-panel > summary { cursor:pointer; color:var(--sub); font-weight:600; }
+.stor-panel.stor-warn > summary { color:#d97706; }
+.stor-body { padding:6px 2px; } .stor-row { padding:3px 0; line-height:1.45; } .stor-row.bad { color:#d97706; } .stor-row.tip { color:var(--sub); } .stor-body .chip { margin:4px 0; }
+.stor-ic { display:inline-block; width:18px; font-weight:700; } .stor-row b { margin-right:4px; }
+@media print { .install-note, .stor-panel, .wipe-hint, .unsaved-note { display:none !important; } }

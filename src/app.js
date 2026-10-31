@@ -10,13 +10,20 @@ import { flTrade } from './fltrade.js';
 import { parseNotamPackage, isActive, activeInWindow, headline, literalKo, glossary, scheduleKo, routeRelation, gcDistNm, CAT_KO, KIND_KO, similarCallsigns, fmsCoord, extractCoords } from './notam.js';
 import { explainFpl, annotateFpl, FIR_KO } from './fpl.js';
 import { verifyModel } from './verify.js';
+import { requestPersist, storageStatus, isStandalone, isIOS } from './storage.js';
 
 const $ = (sel) => document.querySelector(sel);
+// localStorage가 막히거나(개인정보 보호 모드) 꽉 차도 이번 세션은 메모리로 계속 동작하게 한다
+// 쓰기에 실패한 키만 메모리에 들고 있다가(이번 세션 한정) 다음 쓰기가 성공하면 버린다
+const memStore = new Map();
 const store = {
-  get(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : v; } catch { return d; } },
-  set(k, v) { try { localStorage.setItem(k, v); } catch {} },
-  del(k) { try { localStorage.removeItem(k); } catch {} },
+  get(k, d) { if (memStore.has(k)) return memStore.get(k); try { const v = localStorage.getItem(k); return v == null ? d : v; } catch { return d; } },
+  set(k, v) { try { localStorage.setItem(k, v); memStore.delete(k); return true; } catch { memStore.set(k, String(v)); return false; } },
+  del(k) { memStore.delete(k); try { localStorage.removeItem(k); } catch {} },
+  unsaved(k) { return memStore.has(k); },
 };
+let installEvt = null; // Android/데스크톱 크롬의 설치 프롬프트
+window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); installEvt = e; if (document.querySelector('.install-note')) render(); });
 function el(tag, cls, text) {
   const e = document.createElement(tag);
   if (cls) e.className = cls;
@@ -888,6 +895,57 @@ function altnCard() {
 function rawCard(rawText) {
   return briefCard('raw', t('cardRaw'), (b) => { b.append(el('div', 'note', t('rawHint')), el('pre', 'ofp-raw', rawText)); });
 }
+// ── 기기 저장 지키기: 설치 안내 · 저장 상태 · 재업로드 안내 ──
+let storStatus = null, storStatusAt = 0; // 저장 상태는 30초 캐시 (렌더마다 캐시 API를 두드리지 않게)
+function installBanner() {
+  if (isStandalone()) return null;
+  const until = +store.get('sw_install_hide', '0');
+  if (until > Date.now()) return null;
+  const b = el('div', 'note install-note');
+  b.append(el('b', null, '📲 ' + t('installTitle')), el('div', 'sub-line', isIOS() ? t('installIos') : installEvt ? t('installWhy') : t('installOther')));
+  const row = el('div', 'sect-actions');
+  if (installEvt && !isIOS()) { const go = el('button', 'chip chip-on', t('installBtn')); go.onclick = async () => { installEvt.prompt(); try { await installEvt.userChoice; } catch {} installEvt = null; render(); }; row.append(go); }
+  const hide = el('button', 'chip', t('installLater')); hide.onclick = () => { store.set('sw_install_hide', String(Date.now() + 14 * 86400000)); b.remove(); };
+  row.append(hide); b.append(row);
+  return b;
+}
+function storagePanel() {
+  const det = document.createElement('details'); det.className = 'stor-panel';
+  det.open = uiOpen.has('stor');
+  det.addEventListener('toggle', () => { if (det.open) uiOpen.add('stor'); else uiOpen.delete('stor'); });
+  const sum = el('summary'); det.append(sum);
+  const body = el('div', 'stor-body'); det.append(body);
+  const fill = (st) => {
+    body.textContent = '';
+    const rows = [];
+    // ok: true=✓, false=⚠(지금 고쳐야 함), 'tip'=•(권장), null=–(정보 없음)
+    const add = (ok, label, text) => rows.push({ ok, label, text });
+    const ofpLost = store.unsaved('sw_ofp_text');
+    add(st.writable && !ofpLost, t('storSave'), st.writable && !ofpLost ? t('storSaveOk') : t('storSaveBad'));
+    add(st.offline.ok === false ? false : st.offline.ok, t('storOffline'), st.offline.ok === true ? t('storOfflineOk').replace('{v}', st.offline.version) : st.offline.ok === false ? t('storOfflineNo') : t('storOfflineNa'));
+    add(st.persisted === true ? true : st.persisted === false ? 'tip' : null, t('storPersist'), st.persisted === true ? t('storPersistOk') : st.persisted === false ? t('storPersistNo') : t('storPersistNa'));
+    add(st.standalone ? true : 'tip', t('storApp'), st.standalone ? t('storAppOk') : (st.ios ? t('storAppIos') : t('storAppNo')));
+    const at = +store.get('sw_ofp_saved_at', '0');
+    if (model && at && !ofpLost) add(true, t('storFlight'), `${model.fltNo || model.callsign || ''} · ${fmtDayTime(new Date(at), null)}`);
+    const warn = rows.filter((r) => r.ok === false).length;
+    sum.textContent = '💾 ' + t('storTitle') + ' · ' + (warn ? `⚠ ${warn}` : '✓');
+    det.classList.toggle('stor-warn', warn > 0);
+    rows.forEach((r) => {
+      const d = el('div', 'stor-row' + (r.ok === false ? ' bad' : r.ok === 'tip' ? ' tip' : ''));
+      const ic = el('span', 'stor-ic', r.ok === true ? '✓' : r.ok === false ? '⚠' : r.ok === 'tip' ? '•' : '–'); ic.setAttribute('aria-hidden', 'true');
+      d.append(ic, el('b', null, r.label), document.createTextNode(' ' + r.text)); body.append(d);
+    });
+    if (!st.standalone && installEvt && !st.ios) { const go = el('button', 'chip chip-on', t('installBtn')); go.onclick = async () => { installEvt.prompt(); try { await installEvt.userChoice; } catch {} installEvt = null; storStatusAt = 0; render(); }; body.append(go); }
+    body.append(el('div', 'sub-line', t('storNote')));
+    if (warn) det.open = true;
+  };
+  if (storStatus) fill(storStatus); else sum.textContent = '💾 ' + t('storTitle');
+  if (Date.now() - storStatusAt > 30000) {
+    storStatusAt = Date.now();
+    storageStatus().then((st) => { storStatus = st; if (det.isConnected) fill(st); }).catch(() => {});
+  }
+  return det;
+}
 function cardSettingsRow() {
   const row = el('div', 'card-toggles');
   row.append(el('span', 'sect-title', t('cards')));
@@ -924,7 +982,10 @@ function flightView(container) {
     const acceptText = (text) => {
       const parsed = parseOFP(text || '');
       if (!parsed.ok) { err.textContent = t('parseFail'); prog.hidden = true; return; }
-      store.set('sw_ofp_text', text); model = null; import('./map.js').then(({ resetMapView }) => resetMapView()).catch(() => {}); render(); refreshWx();
+      if (store.set('sw_ofp_text', text)) store.set('sw_ofp_saved_at', String(Date.now())); storStatusAt = 0; model = null;
+      // PDF를 올린 사용자 동작 뒤에 영구 저장 요청 (결과는 저장 상태 패널이 다음 렌더 때 읽는다)
+      requestPersist().then(() => { storStatusAt = 0; }).catch(() => {});
+      import('./map.js').then(({ resetMapView }) => resetMapView()).catch(() => {}); render(); refreshWx();
     };
     const handleFile = async (file) => {
       err.textContent = '';
@@ -946,6 +1007,8 @@ function flightView(container) {
     drop.ondragleave = () => drop.classList.remove('drag');
     drop.ondrop = (ev) => { ev.preventDefault(); drop.classList.remove('drag'); const f = ev.dataTransfer?.files?.[0]; if (f) handleFile(f); };
     box.append(drop, fi, prog, err);
+    const ib = installBanner(); if (ib) box.prepend(ib);
+    box.append(el('div', 'sub-line wipe-hint', t('wipeHint')));
     const det = document.createElement('details'); det.className = 'paste-alt';
     det.append(el('summary', null, t('orPaste')));
     const ta = el('textarea', 'ofp-input'); ta.placeholder = t('ofpPlaceholder');
@@ -963,10 +1026,12 @@ function flightView(container) {
   const bNew = el('button', 'chip', t('newOfp'));
   bNew.onclick = () => { store.del('sw_ofp_text'); model = null; stopGps(); import('./map.js').then(({ resetMapView }) => resetMapView()).catch(() => {}); render(); };
   actions.append(bCopy, bPrint, bNew);
+  if (store.unsaved('sw_ofp_text')) container.append(el('div', 'note warn-note unsaved-note', '⚠ ' + t('storUnsavedWarn')));
   container.append(actions);
   [summaryCard(), mapCard(), todoCard(), notamCard(), wxCardsWrap(), nearCard(), srCard(), flTradeCard(), timelineCard(), fuelCard(), fplCard(), altnCard(), rawCard(rawText)]
     .filter(Boolean).forEach((c) => container.append(c));
   container.append(cardSettingsRow());
+  container.append(storagePanel());
   // 지도는 DOM에 붙은 뒤에 초기화해야 크기를 잡는다
   drawMap().then(renderGpsPanel);
 }
