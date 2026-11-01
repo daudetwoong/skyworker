@@ -1,4 +1,6 @@
 // 브리핑 PDF 안의 NOTAM 패키지 파서 + 한국어 해설(약어 사전·한줄 요약·유효시간 판정·좌표 추출). 전부 기기 안 처리(R4)
+import { lang } from './i18n.js';
+const EN = () => lang === 'en';
 const MON = { JAN: 0, FEB: 1, MAR: 2, APR: 3, MAY: 4, JUN: 5, JUL: 6, AUG: 7, SEP: 8, OCT: 9, NOV: 10, DEC: 11 };
 
 export function notamTs(s) {
@@ -185,6 +187,17 @@ export const CAT_KO = {
   'AIRPORT': '공항', 'APPROACH PROCEDURE': '접근절차', 'AIP SUPPLEMENT': 'AIP 보충판(SUP)', 'AREA': '공역', 'ENROUTE': '항로',
 };
 export const KIND_KO = { DEP: '출발', DEST: '도착', ALTN: '교체', ERA: '항로 교체(ERA)', FIR: 'FIR' };
+const KIND_EN = { DEP: 'Departure', DEST: 'Destination', ALTN: 'Alternate', ERA: 'En-route alt (ERA)', FIR: 'FIR' };
+const CAT_EN = {
+  'RUNWAY': 'Runway', 'TAXIWAY': 'Taxiway', 'RAMP': 'Apron & stands', 'NAVAID': 'Navaids', 'APPROACH': 'Approach', 'GPS': 'GPS',
+  'AIRWAY': 'Airways', 'AIRSPACE': 'Airspace', 'OTHER': 'Other', 'COMPANY ADVISORY': 'Company advisory', 'RUNWAY LIGHT': 'Runway lights',
+  'DEPARTURE AIRPORT TECHNICAL INFORMATION': 'Departure airport technical info', 'LIGHTING': 'Lighting', 'OBSTACLE': 'Obstacles', 'COMMUNICATION': 'Communications',
+  'SID/STAR': 'SID/STAR', 'MILITARY': 'Military activity', 'DANGER AREA': 'Danger areas',
+  'AIRPORT': 'Airport', 'APPROACH PROCEDURE': 'Approach procedures', 'AIP SUPPLEMENT': 'AIP supplement (SUP)', 'AREA': 'Airspace', 'ENROUTE': 'En route',
+};
+// 언어에 맞는 분류·종류 이름 (사전에 없으면 원문 그대로)
+export const catName = (c) => (EN() ? CAT_EN[c] : CAT_KO[c]) || c;
+export const kindName = (k) => (EN() ? KIND_EN[k] : KIND_KO[k]) || k;
 
 const ABBR = {
   'CLSD': '폐쇄', 'CLOSED': '폐쇄', 'U/S': '사용 불가(고장)', 'UNSERVICEABLE': '사용 불가', 'AVBL': '사용 가능', 'NOT AVBL': '사용 불가', 'UNAVBL': '사용 불가',
@@ -216,45 +229,87 @@ const ABBR = {
 const ABBR_KEYS = Object.keys(ABBR).sort((a, b) => b.length - a.length);
 const ABBR_RX = new RegExp('(?<![A-Z0-9/])(' + ABBR_KEYS.map((k) => k.replace(/[.*+?^${}()|[\]\\\/]/g, '\\$&')).join('|') + ')(?![A-Z0-9/])', 'g');
 
+const HL = {
+  rwyClsd: ['활주로 폐쇄', 'Runway closed'], twyClsd: ['유도로 폐쇄', 'Taxiway closed'], standClsd: ['주기장 폐쇄', 'Stand closed'], clsd: ['폐쇄', 'Closed'],
+  ils: ['ILS 사용 불가', 'ILS unavailable'], navaid: ['항법시설 제한', 'Navaid limited'], gps: ['GPS 불안정', 'GPS unreliable'], obst: ['장애물', 'Obstacle'],
+  prohib: ['금지구역', 'Prohibited area'], restr: ['제한·위험구역', 'Restricted/danger area'], mil: ['군 훈련/사격', 'Military exercise/firing'],
+  rocket: ['로켓/우주 활동', 'Rocket/space activity'], uas: ['무인기', 'Drones/UAS'], volc: ['화산', 'Volcanic'], awy: ['항로 사용 제한', 'Route restriction'],
+  dl: ['데이터링크 장애', 'Datalink outage'], proc: ['출도착·접근절차 변경', 'SID/STAR/approach change'], freq: ['주파수 변경/장애', 'Frequency change/outage'],
+  similar: ['유사 콜사인 주의', 'Similar callsign'], info: [' 정보', ' info'], general: ['일반 정보', 'General info'],
+};
+const hl = (k) => HL[k][EN() ? 1 : 0];
 export function headline(n) {
   const u = String(n.etext || '').toUpperCase();
   const has = (rx) => rx.test(u);
   const bits = [];
-  if (has(/\bRWY[^.]{0,40}\bCLSD\b/)) bits.push('활주로 폐쇄');
-  else if (has(/\bTWY[^.]{0,60}\bCLSD\b/)) bits.push('유도로 폐쇄');
-  else if (has(/\b(STAND|STANDS|PARKING)\b[^.]{0,40}\bCLSD\b/)) bits.push('주기장 폐쇄');
-  else if (has(/\bCLSD\b|\bCLOSED\b/)) bits.push('폐쇄');
-  if (has(/\b(ILS|LOC|GP)\b[^.]{0,40}(U\/S|NOT AVBL|UNSERVICEABLE|UNAVBL)/)) bits.push('ILS 사용 불가');
-  else if (has(/\b(VOR|DME|NDB|TACAN|VORTAC)\b[^.]{0,60}(U\/S|NOT AVBL|UNSERVICEABLE|UNAVBL|LIMITATION)/)) bits.push('항법시설 제한');
-  if (has(/GPS|GNSS/) && has(/UNRELIABLE|NOT AVBL|INTERFERENCE|JAMM|UNAVBL|OUTAGE/)) bits.push('GPS 불안정');
-  if (has(/\bOBST\b|\bCRANE\b/)) bits.push('장애물');
-  if (has(/\bPROHIBITED\b/)) bits.push('금지구역');
-  else if (has(/\bRESTRICTED\b|\bDANGER AREA\b/)) bits.push('제한·위험구역');
-  if (has(/\bMIL\b|FRNG|FIRING|EXER/)) bits.push('군 훈련/사격');
-  if (has(/ROCKET|LAUNCH|SPACE|DEBRIS/)) bits.push('로켓/우주 활동');
-  if (has(/\bUAS\b|DRONE|UNMANNED|RPAS/)) bits.push('무인기');
-  if (has(/VOLCAN|\bASH\b/)) bits.push('화산');
-  if (has(/\b(AWY|ATS RTE|RTE|ROUTE|SEGMENT)\b/) && has(/CLSD|NOT AVBL|SUSPENDED/)) bits.push('항로 사용 제한');
-  if (has(/CPDLC|ADS-?C|ADS-?B/) && has(/NOT AVBL|U\/S|OUTAGE|UNAVBL/)) bits.push('데이터링크 장애');
-  if (has(/\b(SID|STAR|IAP|APCH)\b/) && has(/NOT AVBL|AMENDED|SUSPENDED|CHG|CHANGED/)) bits.push('출도착·접근절차 변경');
-  if (has(/\bFREQ\b[^.]{0,30}(U\/S|NOT AVBL|UNAVBL|CHG)/)) bits.push('주파수 변경/장애');
-  if (has(/SIMILAR CALL ?SIGN/)) bits.push('유사 콜사인 주의');
-  if (!bits.length) bits.push(CAT_KO[n.category] ? CAT_KO[n.category] + ' 정보' : '일반 정보');
+  if (has(/\bRWY[^.]{0,40}\bCLSD\b/)) bits.push(hl('rwyClsd'));
+  else if (has(/\bTWY[^.]{0,60}\bCLSD\b/)) bits.push(hl('twyClsd'));
+  else if (has(/\b(STAND|STANDS|PARKING)\b[^.]{0,40}\bCLSD\b/)) bits.push(hl('standClsd'));
+  else if (has(/\bCLSD\b|\bCLOSED\b/)) bits.push(hl('clsd'));
+  if (has(/\b(ILS|LOC|GP)\b[^.]{0,40}(U\/S|NOT AVBL|UNSERVICEABLE|UNAVBL)/)) bits.push(hl('ils'));
+  else if (has(/\b(VOR|DME|NDB|TACAN|VORTAC)\b[^.]{0,60}(U\/S|NOT AVBL|UNSERVICEABLE|UNAVBL|LIMITATION)/)) bits.push(hl('navaid'));
+  if (has(/GPS|GNSS/) && has(/UNRELIABLE|NOT AVBL|INTERFERENCE|JAMM|UNAVBL|OUTAGE/)) bits.push(hl('gps'));
+  if (has(/\bOBST\b|\bCRANE\b/)) bits.push(hl('obst'));
+  if (has(/\bPROHIBITED\b/)) bits.push(hl('prohib'));
+  else if (has(/\bRESTRICTED\b|\bDANGER AREA\b/)) bits.push(hl('restr'));
+  if (has(/\bMIL\b|FRNG|FIRING|EXER/)) bits.push(hl('mil'));
+  if (has(/ROCKET|LAUNCH|SPACE|DEBRIS/)) bits.push(hl('rocket'));
+  if (has(/\bUAS\b|DRONE|UNMANNED|RPAS/)) bits.push(hl('uas'));
+  if (has(/VOLCAN|\bASH\b/)) bits.push(hl('volc'));
+  if (has(/\b(AWY|ATS RTE|RTE|ROUTE|SEGMENT)\b/) && has(/CLSD|NOT AVBL|SUSPENDED/)) bits.push(hl('awy'));
+  if (has(/CPDLC|ADS-?C|ADS-?B/) && has(/NOT AVBL|U\/S|OUTAGE|UNAVBL/)) bits.push(hl('dl'));
+  if (has(/\b(SID|STAR|IAP|APCH)\b/) && has(/NOT AVBL|AMENDED|SUSPENDED|CHG|CHANGED/)) bits.push(hl('proc'));
+  if (has(/\bFREQ\b[^.]{0,30}(U\/S|NOT AVBL|UNAVBL|CHG)/)) bits.push(hl('freq'));
+  if (has(/SIMILAR CALL ?SIGN/)) bits.push(hl('similar'));
+  if (!bits.length) bits.push((EN() ? CAT_EN : CAT_KO)[n.category] ? catName(n.category) + hl('info') : hl('general'));
   return [...new Set(bits)].slice(0, 3).join(' · ');
 }
 
+// 영어 모드: NOTAM 약어를 쉬운 영어 단어로 풀어 쓴다(이미 영어 단어인 것은 그대로) — '쉬운 영어 풀이'
+const ABBR_EN = {
+  'CLSD': 'closed', 'U/S': 'unserviceable', 'AVBL': 'available', 'NOT AVBL': 'not available', 'UNAVBL': 'unavailable', 'OPR': 'operating', 'OPS': 'operations',
+  'ACT': 'active', 'INOP': 'inoperative', 'WIP': 'work in progress', 'CNL': 'cancelled', 'CHG': 'changed', 'LTD': 'limited', 'REQ': 'request', 'RQRD': 'required',
+  'PPR': 'prior permission required', 'EXC': 'except', 'BTN': 'between', 'BTW': 'between', 'WI': 'within', 'ABV': 'above', 'BLW': 'below',
+  'AGL': 'above ground level', 'AMSL': 'above mean sea level', 'SFC': 'surface', 'GND': 'ground', 'UNL': 'unlimited', 'NM': 'nautical miles', 'PSN': 'position',
+  'DLY': 'daily', 'H24': '24 hours', 'HJ': 'daytime', 'HN': 'night-time', 'PERM': 'permanent', 'UFN': 'until further notice', 'TIL': 'until', 'FM': 'from',
+  'RWY': 'runway', 'TWY': 'taxiway', 'TWYS': 'taxiways', 'APN': 'apron', 'THR': 'threshold', 'DTHR': 'displaced threshold', 'AD': 'aerodrome', 'ACFT': 'aircraft',
+  'MAINT': 'maintenance', 'CONST': 'construction', 'ALS': 'approach lighting system', 'LGT': 'lights', 'CL': 'centreline', 'GP': 'glide path', 'GNSS': 'satellite navigation',
+  'IAP': 'instrument approach', 'APCH': 'approach', 'DEP': 'departure', 'ARR': 'arrival', 'FREQ': 'frequency', 'COM': 'communications', 'RDR': 'radar',
+  'ATS': 'air traffic services', 'ATC': 'air traffic control', 'ACC': 'area control centre', 'APP': 'approach control', 'TWR': 'tower', 'CTA': 'control area', 'TMA': 'terminal control area',
+  'AWY': 'airway', 'RTE': 'route', 'DCT': 'direct', 'WPT': 'waypoint', 'LVL': 'level', 'ALT': 'altitude', 'TRA': 'temporary reserved area', 'TSA': 'temporary segregated area',
+  'CTN': 'caution', 'ADZ': 'advise', 'TFC': 'traffic', 'ATFM': 'air traffic flow management', 'MIL': 'military', 'EXER': 'exercise', 'FRNG': 'firing', 'UAS': 'unmanned aircraft', 'UAV': 'unmanned aerial vehicle',
+  'OBST': 'obstacle', 'REF': 'reference', 'IAW': 'in accordance with', 'TEMPO': 'temporary', 'WX': 'weather', 'SVC': 'service', 'HR': 'hour', 'HRS': 'hours',
+  'COORD': 'coordinates', 'MNM': 'minimum', 'NML': 'normal', 'EMERG': 'emergency', 'FLW': 'following', 'AS FLW': 'as follows', 'DEG': 'degrees', 'NR': 'number',
+  'TODC': 'takeoff performance calculation', 'EST': 'estimated', 'INSTL': 'installed', 'HGT': 'height', 'FCST': 'forecast',
+  'TEMP': 'temporary', 'RMK': 'remark', 'OLS': 'obstacle limitation surface', 'ABT': 'about', 'ACT AS FLW': 'active as follows', 'EV': 'every', 'TKOF': 'takeoff', 'LDG': 'landing', 'RTF': 'radiotelephony', 'SKED': 'scheduled',
+  'TORA': 'takeoff run available', 'TODA': 'takeoff distance available', 'ASDA': 'accelerate-stop distance available', 'LDA': 'landing distance available', 'N/A': 'not applicable',
+};
+const ABBR_EN_KEYS = Object.keys(ABBR_EN).sort((a, b) => b.length - a.length);
+const ABBR_EN_RX = new RegExp('(?<![A-Z0-9/])(' + ABBR_EN_KEYS.map((k) => k.replace(/[.*+?^${}()|[\]\\\/]/g, '\\$&')).join('|') + ')(?![A-Z0-9/])', 'g');
 export function literalKo(text) {
-  return String(text || '').toUpperCase().replace(/\s+/g, ' ').trim().replace(ABBR_RX, (w) => (ABBR[w] && ABBR[w] !== w ? `[${ABBR[w]}]` : w));
+  const u = String(text || '').toUpperCase().replace(/\s+/g, ' ').trim();
+  if (EN()) return u.replace(ABBR_EN_RX, (w, _g, off, str) => { // 원문 대문자는 그대로, 약어만 쉬운 영어 단어(소문자)로
+    const after = str.slice(off + w.length);
+    if (w === 'TEMP' && /^[ :]*[-+M]?\d/.test(after)) return 'temperature'; // Doc 8400: TEMP=기온. 한국 AIS는 '임시'로도 써서 뒤가 숫자일 때만 기온
+    if (w === 'OPR' && /^\s*[:/]/.test(after)) return 'operator';
+    return ABBR_EN[w];
+  });
+  return u.replace(ABBR_RX, (w) => (ABBR[w] && ABBR[w] !== w ? `[${ABBR[w]}]` : w));
 }
 export function glossary(text) {
   const u = String(text || '').toUpperCase();
   const found = new Map();
+  if (EN()) { (u.match(ABBR_EN_RX) || []).forEach((w) => { if (!/^(FL|NM)$/.test(w)) found.set(w, ABBR_EN[w]); }); return [...found.entries()].slice(0, 14); }
   (u.match(ABBR_RX) || []).forEach((w) => { if (!/^(AND|OR|OF|FL|VOR|DME|NDB|ILS|GPS|NM|SID|STAR|FIR|CL)$/.test(w) && ABBR[w] && ABBR[w] !== w) found.set(w, ABBR[w]); });
   return [...found.entries()].slice(0, 14);
 }
 export function scheduleKo(s) {
   if (!s) return '';
-  return String(s).toUpperCase()
+  const u = String(s).toUpperCase();
+  if (EN()) return u.replace(/\bH24\b/g, '24 hours').replace(/\b(DAILY|DLY)\b/g, 'daily').replace(/\bEXC\b/g, 'except').replace(/\bSR\b/g, 'sunrise').replace(/\bSS\b/g, 'sunset')
+    .replace(/\b(MON|TUE|WED|THU|FRI|SAT|SUN)\b/g, (d) => d[0] + d.slice(1).toLowerCase())
+    .replace(/\b(\d{2})(\d{2})-(\d{2})(\d{2})\b/g, '$1:$2–$3:$4Z');
+  return u
     .replace(/\bH24\b/g, '24시간').replace(/\b(DAILY|DLY)\b/g, '매일').replace(/\bEXC\b/g, '제외').replace(/\bSR\b/g, '일출').replace(/\bSS\b/g, '일몰')
     .replace(/\b(MON|TUE|WED|THU|FRI|SAT|SUN)\b/g, (d) => ({ MON: '월', TUE: '화', WED: '수', THU: '목', FRI: '금', SAT: '토', SUN: '일' })[d] + '요일')
     .replace(/\b(\d{2})(\d{2})-(\d{2})(\d{2})\b/g, '$1:$2~$3:$4Z');

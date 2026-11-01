@@ -1,5 +1,5 @@
 // AWC JSON(METAR/TAF)을 한국어 문장으로 렌더링 — 사전에 없는 코드는 창작하지 않고 원문 유지
-import { t } from './i18n.js';
+import { t, lang } from './i18n.js';
 import { fmtDayTime, fmtTime } from './time.js';
 
 export const PROXY_DEFAULT = 'https://skyworker-wx.daudet0127.workers.dev';
@@ -25,15 +25,42 @@ const WX_CODES = {
   TS: '뇌우', SH: '소나기성', FZ: '어는', MI: '얕은', BC: '산재된', PR: '부분적', DR: '낮게 날리는', BL: '높이 날리는',
   SQ: '스콜', FC: '깔때기구름', PO: '먼지회오리', UP: '미상 강수', NSW: '악기상 없음', VC: '주변',
 };
+const CLOUD_EN = { FEW: 'few (1–2/8)', SCT: 'scattered (3–4/8)', BKN: 'broken (5–7/8)', OVC: 'overcast (8/8)', CLR: 'clear', SKC: 'sky clear', NSC: 'no significant cloud', CAVOK: 'CAVOK', VV: 'vertical visibility' };
 const CLOUD_KO = { FEW: '약간(1~2/8)', SCT: '산재(3~4/8)', BKN: '많음(5~7/8)', OVC: '흐림(8/8)', CLR: '구름 없음', SKC: '구름 없음', NSC: '유의 구름 없음', CAVOK: 'CAVOK', VV: '수직시정' };
 
+// 영어: 강도 + 서술어 + 현상 + (SH면 'showers') — '-SHRA' → 'light rain showers', 'TSRA' → 'thunderstorm with rain'
+const WX_EN = { RA: 'rain', SN: 'snow', DZ: 'drizzle', SG: 'snow grains', PL: 'ice pellets', GR: 'hail', GS: 'small hail', FG: 'fog', BR: 'mist', HZ: 'haze', FU: 'smoke', DU: 'dust', SA: 'sand', VA: 'volcanic ash', SQ: 'squalls', FC: 'funnel cloud', PO: 'dust whirls', UP: 'unknown precipitation', NSW: 'no significant weather' };
+const WX_DESC_EN = { MI: 'shallow', BC: 'patches of', PR: 'partial', DR: 'low drifting', BL: 'blowing', FZ: 'freezing' };
+function decodeWxEn(tok) {
+  let core = tok, intensity = '';
+  if (core.startsWith('+')) { intensity = 'heavy'; core = core.slice(1); }
+  else if (core.startsWith('-')) { intensity = 'light'; core = core.slice(1); }
+  if (core === 'NSW') return WX_EN.NSW;
+  let recent = false; if (core.startsWith('RE')) { recent = true; core = core.slice(2); } // RERA = 최근 비
+  if (core === 'FC' && intensity === 'heavy') return 'tornado or waterspout'; // +FC는 '강한 깔때기구름'이 아니라 토네이도/용오름
+  let vc = false; if (core.startsWith('VC')) { vc = true; core = core.slice(2); }
+  const parts = core.match(/.{1,2}/g) || [];
+  if (!parts.length || !parts.every((p) => WX_EN[p] || WX_DESC_EN[p] || p === 'SH' || p === 'TS')) return tok; // 모르는 코드는 원문 그대로
+  const ts = parts.includes('TS'), sh = parts.includes('SH');
+  const desc = parts.filter((p) => WX_DESC_EN[p]).map((p) => WX_DESC_EN[p]);
+  const phen = parts.filter((p) => WX_EN[p]).map((p) => WX_EN[p]).join(' and ');
+  let out;
+  if (ts) out = [intensity, 'thunderstorm'].filter(Boolean).join(' ') + (phen ? ` with ${[...desc, phen].join(' ')}${sh ? ' showers' : ''}` : ''); // 강도는 묶음 전체(+TSRA = heavy thunderstorm with rain)
+  else if (sh) out = [intensity, ...desc, phen, 'showers'].filter(Boolean).join(' ');
+  else out = [intensity, ...desc, phen].filter(Boolean).join(' ');
+  if (recent) out = `recent ${out}`;
+  return vc ? `${out} in the vicinity` : out;
+}
 export function decodeWxString(s) {
   if (!s) return '';
-  return s.split(' ').map((tok) => {
+  const toks = s.split(/\s+/).filter(Boolean); // 겹친 공백으로 빈 칸이 생기지 않게
+  if (lang === 'en') return toks.map(decodeWxEn).join(', ');
+  return toks.map((tok) => {
     let out = tok, intensity = '';
     let core = tok;
     if (core.startsWith('+')) { intensity = '강한 '; core = core.slice(1); }
     else if (core.startsWith('-')) { intensity = '약한 '; core = core.slice(1); }
+    if (core === 'FC' && intensity === '강한 ') return '토네이도·용오름'; // +FC
     const parts = core.match(/.{1,2}/g) || [];
     if (parts.every((p) => WX_CODES[p])) out = intensity + parts.map((p) => WX_CODES[p]).join(' ');
     return out;
@@ -60,7 +87,7 @@ export function fmtClouds(clouds, raw) {
   if (raw && /\bCAVOK\b/.test(raw)) return '';
   if (!clouds || !clouds.length) return t('clouds') + ': —';
   return clouds.map((c) => {
-    const cover = CLOUD_KO[c.cover] || c.cover;
+    const cover = (lang === 'en' ? CLOUD_EN : CLOUD_KO)[c.cover] || c.cover;
     const base = c.base != null ? ` ${c.base.toLocaleString()}ft` : '';
     const type = c.type ? ` ${c.type}` : '';
     return `${cover}${base}${type}`;

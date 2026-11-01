@@ -424,5 +424,35 @@ ok(midn.etaDate?.toISOString() === '2026-11-16T01:22:00.000Z', '범용 시각 �
 const softChk = verifyModel(parseOFP(OFP_GENERIC_KG.replace('MIN T/O FUEL   6980', 'MIN T/O FUEL   7300')), '');
 ok(vk(softChk, 'fuelRqrd')?.ok === false && vk(softChk, 'fuelRqrd')?.soft === true, '범용 양식 연료 합계 불일치는 참고(soft)로');
 
+console.log('[i18n] 영어 모드');
+const { setLang } = await import('../src/i18n.js');
+const { headline: hlF, literalKo: litF, glossary: glF, scheduleKo: schF, catName, kindName } = await import('../src/notam.js');
+const { annotateFpl: anF, explainFpl: exF, firName } = await import('../src/fpl.js');
+const { airportInfo } = await import('../src/airports.js');
+setLang('en');
+try {
+  ok(decodeWxString('-SHRA') === 'light rain showers' && decodeWxString('TSRA') === 'thunderstorm with rain' && decodeWxString('FZDZ') === 'freezing drizzle' && decodeWxString('VCSH') === 'showers in the vicinity' && decodeWxString('XX') === 'XX', '기상 현상 영어(어순)', [decodeWxString('-SHRA'), decodeWxString('TSRA')]);
+  const nEn = { etext: 'ILS RWY 15R/33L U/S DUE TO WIP', category: 'APPROACH PROCEDURE' };
+  ok(hlF(nEn) === 'ILS unavailable' && hlF({ etext: 'NIL', category: 'RUNWAY' }) === 'Runway info' && catName('AIP SUPPLEMENT') === 'AIP supplement (SUP)' && kindName('DEST') === 'Destination', 'NOTAM 요약·분류 영어', [hlF(nEn), hlF({ etext: 'NIL', category: 'RUNWAY' })]);
+  ok(litF('TEMP OBST ERECTED BTN RWY 15R/33L AND TWY C') === 'temporary obstacle ERECTED between runway 15R/33L AND taxiway C' /* 한국 AIS의 TEMP=임시 */, 'NOTAM 쉬운 영어 풀이(약어만 풀기)', litF('TEMP OBST ERECTED BTN RWY 15R/33L AND TWY C'));
+  ok(glF('RWY CLSD').every(([, v]) => !/[가-힣]/.test(v)) && schF('DLY 0000-0900 EXC SUN') === 'daily 00:00–09:00Z except Sun', 'NOTAM 약어 목록·운용시간 영어', schF('DLY 0000-0900 EXC SUN'));
+  const enAll = JSON.stringify([anF(OFP_CFP_SAMPLE), exF(OFP_CFP_SAMPLE)]);
+  ok(!/[가-힣]/.test(enAll) && exF(OFP_CFP_SAMPLE).caps[0].text === 'RVSM approved (W)' && firName('RKRR') === 'Incheon', 'FPL 풀이 전부 영어', (enAll.match(/[가-힣]+/g) || []).slice(0, 5));
+  ok(airportInfo('RKSI').name === 'Incheon' && airportInfo('ZZZZ').name === 'ZZZZ', '공항 이름 영어');
+} finally { setLang('ko'); }
+ok(decodeWxString('-SHRA') === '약한 소나기성 비' && airportInfo('RKSI').name === '인천' && hlF({ etext: 'ILS RWY 15R U/S', category: 'X' }) === 'ILS 사용 불가', '한국어로 되돌리면 그대로');
+
+setLang('en');
+try {
+  const W = (x) => decodeWxString(x);
+  ok(W('+FC') === 'tornado or waterspout' && W('FC') === 'funnel cloud' && W('+TS') === 'heavy thunderstorm' && W('-SH') === 'light showers' && W('+TSRA') === 'heavy thunderstorm with rain' && W('-TSRA') === 'light thunderstorm with rain' && W('TSSHRA') === 'thunderstorm with rain showers' && W('RERA') === 'recent rain' && W('BCFG') === 'patches of fog' && W('-RA  BR') === 'light rain, mist', '기상 영어: +FC 토네이도·강도는 묶음 전체·최근·빈 칸', ['+FC', '+TS', '-SH', '+TSRA', 'RERA', '-RA  BR'].map(W));
+  ok(litF('TEMP -5C AT SFC') === 'temperature -5C AT surface' && litF('OPR: ABC AIRLINES') === 'operator: ABC AIRLINES' && litF('RWY 15 TORA 3000M') === 'runway 15 takeoff run available 3000M', 'NOTAM 영어 문맥: TEMP 숫자=기온, OPR:=운항사, TORA', [litF('TEMP -5C AT SFC'), litF('OPR: ABC AIRLINES')]);
+  ok(JSON.stringify(glF('RWY CLSD DUE WIP')) === JSON.stringify([['RWY', 'runway'], ['CLSD', 'closed'], ['WIP', 'work in progress']]), '영어 약어 목록 내용', glF('RWY CLSD DUE WIP'));
+  const fplRich = '(FPL-AAR1-IS\n-A21N/M-SDE2E3FGHIJ3J7M3P2RWXYZ/LB1D1\n-RKSI0100\n-N0450F350 DCT\n-VHHH0340 VMMC\n-PBN/A1B1 STS/HOSP MEDEVAC SUR/RSP180 260B CODE/71C371 SEL/QRBM PER/C RMK/TCAS II EQUIPPED\n-E/0500 P/TBN R/UVE S/PM J/LF D/2 20 C YELLOW A/WHITE N/NIL C/KIM)';
+  const richEn = JSON.stringify([anF(fplRich), exF(fplRich)]);
+  ok(!/[가-힣]/.test(richEn) && /Medical flight/.test(richEn) && /Endurance 05 h 00 min/.test(richEn) && /Dinghies 2 · capacity 20 · covered/.test(richEn) && /ADS-C report 180 s/.test(richEn), 'FPL Item 18/19 전 갈래 영어', (richEn.match(/[가-힣]+/g) || []).slice(0, 5));
+} finally { setLang('ko'); }
+ok(decodeWxString('+FC') === '토네이도·용오름' && decodeWxString('FC') === '깔때기구름', '한국어 +FC도 토네이도');
+
 if (fails) { console.error(`\n${fails}개 실패`); process.exit(1); }
 console.log('\n모든 테스트 통과');

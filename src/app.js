@@ -7,8 +7,8 @@ import { sunTimes } from './sun.js';
 import { timePref, toggleTimePref, fmtTime, fmtHmZ, fmtDayTime, tzOffsetMin } from './time.js';
 import { parseOFP } from './ofp.js';
 import { flTrade } from './fltrade.js';
-import { parseNotamPackage, isActive, activeInWindow, headline, literalKo, glossary, scheduleKo, routeRelation, gcDistNm, CAT_KO, KIND_KO, similarCallsigns, fmsCoord, extractCoords } from './notam.js';
-import { explainFpl, annotateFpl, FIR_KO } from './fpl.js';
+import { parseNotamPackage, isActive, activeInWindow, headline, literalKo, glossary, scheduleKo, routeRelation, gcDistNm, catName, kindName, similarCallsigns, fmsCoord, extractCoords } from './notam.js';
+import { explainFpl, annotateFpl, firName } from './fpl.js';
 import { verifyModel } from './verify.js';
 import { formatSignature } from './generic.js';
 import { requestPersist, storageStatus, isStandalone, isIOS } from './storage.js';
@@ -17,7 +17,7 @@ import { routeCells, fetchSigmets, fetchPireps, normSigmet, classifySigmet, near
 const $ = (sel) => document.querySelector(sel);
 // localStorage가 막히거나(개인정보 보호 모드) 꽉 차도 이번 세션은 메모리로 계속 동작하게 한다
 // 쓰기에 실패한 키만 메모리에 들고 있다가(이번 세션 한정) 다음 쓰기가 성공하면 버린다
-const APP_VER = 'v0.11.0'; // 진단 복사에 넣는 앱 버전 (sw.js CACHE_VERSION과 맞출 것)
+const APP_VER = 'v0.12.0'; // 진단 복사에 넣는 앱 버전 (sw.js CACHE_VERSION과 맞출 것)
 const memStore = new Map();
 const store = {
   get(k, d) { if (memStore.has(k)) return memStore.get(k); try { const v = localStorage.getItem(k); return v == null ? d : v; } catch { return d; } },
@@ -512,7 +512,7 @@ function todoItems() {
   const idxOf = (name) => leg.findIndex((r) => r.point === name);
   const toc = leg.find((r) => r.point === 'TOC'), tod = leg.find((r) => r.point === 'TOD');
   if (toc) L.push({ kind: 'toc', label: t('tlToc'), point: 'TOC', idx: idxOf('TOC'), time: at(toc.accMin) });
-  leg.forEach((r, i) => { if (r.fir) L.push({ kind: 'fir', label: `${t('tlFir')} ${r.fir}${FIR_KO[r.fir] ? '(' + FIR_KO[r.fir] + ')' : ''}`, point: r.point, idx: i, time: at(r.accMin) }); });
+  leg.forEach((r, i) => { if (r.fir) L.push({ kind: 'fir', label: `${t('tlFir')} ${r.fir}${firName(r.fir) ? '(' + firName(r.fir) + ')' : ''}`, point: r.point, idx: i, time: at(r.accMin) }); });
   m._srRuns.forEach((r) => L.push({ kind: 'sr', label: `🌪️ SR${r.max} ${leg[r.s]?.point}→${leg[r.i1]?.point}`, point: leg[r.s]?.point, idx: r.s, time: at(r.t0) }));
   if (tod) L.push({ kind: 'tod', label: t('tlTod'), point: 'TOD', idx: idxOf('TOD'), time: at(tod.accMin) });
   // 보고·요청·교신 문장 (DISP REMARK · 회사 공지 · 노탐 코멘트 · 경로 교차 노탐)
@@ -739,7 +739,7 @@ function notamCard() {
       const items = np.items.filter((n) => n.kind === k);
       const act = items.filter((n) => n.act).length;
       const btn = el('button', 'ntab' + (k === notamTab ? ' on' : ''));
-      btn.append(document.createTextNode(KIND_KO[k]), el('small', null, `${act}/${items.length}`));
+      btn.append(document.createTextNode(kindName(k)), el('small', null, `${act}/${items.length}`));
       btn.onclick = () => { notamTab = k; render(); };
       tabs.append(btn);
     });
@@ -754,7 +754,7 @@ function notamCard() {
       const groups = new Map();
       for (const n of s.items) { if (!notamAll && !n.act) continue; const c = n.category; if (!groups.has(c)) groups.set(c, []); groups.get(c).push(n); }
       for (const [cat, arr] of groups) {
-        b.append(el('div', 'ncat', `${CAT_KO[cat] || cat} · ${arr.length}`));
+        b.append(el('div', 'ncat', `${catName(cat)} · ${arr.length}`));
         const rank = (n) => (n.act ? 0 : 4) + (n.rel === 'direct' ? (n.inTime ? 0 : 1) : n.rel === 'near' ? 2 : 3);
         arr.sort((x, y) => rank(x) - rank(y));
         arr.forEach((n) => b.append(notamItem(n)));
@@ -928,7 +928,7 @@ function timelineCard() {
     const rows = [[t('tlEtd'), m.etdDate, m.dep?.tzMin, m.depIcao]];
     const toc = m._leg?.find((r) => r.point === 'TOC');
     if (toc?.accMin != null) rows.push([t('tlToc'), new Date(m.etdDate.getTime() + toc.accMin * 60000), null, null]);
-    (m.eet || []).forEach((e) => rows.push([`${t('tlFir')} ${e.fir}${FIR_KO[e.fir] ? '(' + FIR_KO[e.fir] + ')' : ''}`, new Date(m.etdDate.getTime() + e.min * 60000), null, null]));
+    (m.eet || []).forEach((e) => rows.push([`${t('tlFir')} ${e.fir}${firName(e.fir) ? '(' + firName(e.fir) + ')' : ''}`, new Date(m.etdDate.getTime() + e.min * 60000), null, null]));
     m._srRuns.forEach((r) => { if (r.t0 != null) rows.push([`🌪️ ${t('tlSr')} SR${r.max} ${m._leg[r.s]?.point}→${m._leg[r.i1]?.point}`, new Date(m.etdDate.getTime() + r.t0 * 60000), null, null]); });
     sigItems().items.filter(({ c }) => c.cls === 'red' && c.enterMin != null).forEach(({ sg, c }) => rows.push([`⛈️ ${t('tlSig')} ${sigTitle(sg)}`, new Date(m.etdDate.getTime() + c.enterMin * 60000), null, null])); // 타임라인 다른 줄과 같은 기준(OFP ETD)
     const tod = m._leg?.find((r) => r.point === 'TOD');
@@ -1228,7 +1228,7 @@ function render() {
 function initControls() {
   $('#btnRefresh').onclick = refreshWx;
   $('#btnTheme').onclick = () => { const next = document.body.dataset.theme === 'dark' ? 'light' : 'dark'; document.body.dataset.theme = next; store.set('sw_theme', next); };
-  $('#btnLang').onclick = () => { setLang(lang === 'ko' ? 'en' : 'ko'); store.set('sw_lang', lang); render(); };
+  $('#btnLang').onclick = () => { setLang(lang === 'ko' ? 'en' : 'ko'); store.set('sw_lang', lang); model = null; sigMemo = null; render(); }; // 모델 안의 FPL 요약 등 언어별 문구를 다시 만든다
   $('#btnTime').onclick = () => { toggleTimePref(); render(); };
   $('#tabFlight').onclick = () => { store.set('sw_tab', 'flight'); render(); };
   $('#tabAirports').onclick = () => { store.set('sw_tab', 'airports'); render(); };
