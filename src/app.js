@@ -10,12 +10,14 @@ import { flTrade } from './fltrade.js';
 import { parseNotamPackage, isActive, activeInWindow, headline, literalKo, glossary, scheduleKo, routeRelation, gcDistNm, CAT_KO, KIND_KO, similarCallsigns, fmsCoord, extractCoords } from './notam.js';
 import { explainFpl, annotateFpl, FIR_KO } from './fpl.js';
 import { verifyModel } from './verify.js';
+import { formatSignature } from './generic.js';
 import { requestPersist, storageStatus, isStandalone, isIOS } from './storage.js';
 import { routeCells, fetchSigmets, fetchPireps, normSigmet, classifySigmet, nearPireps, placeable } from './sigmet.js';
 
 const $ = (sel) => document.querySelector(sel);
 // localStorage가 막히거나(개인정보 보호 모드) 꽉 차도 이번 세션은 메모리로 계속 동작하게 한다
 // 쓰기에 실패한 키만 메모리에 들고 있다가(이번 세션 한정) 다음 쓰기가 성공하면 버린다
+const APP_VER = 'v0.11.0'; // 진단 복사에 넣는 앱 버전 (sw.js CACHE_VERSION과 맞출 것)
 const memStore = new Map();
 const store = {
   get(k, d) { if (memStore.has(k)) return memStore.get(k); try { const v = localStorage.getItem(k); return v == null ? d : v; } catch { return d; } },
@@ -31,7 +33,10 @@ function el(tag, cls, text) {
   if (text != null) e.textContent = text;
   return e;
 }
-const p100lbs = (v) => v == null ? '—' : (v * 100).toLocaleString() + ' ' + t('lbs');
+// 연료 단위: 아시아나 양식은 100LBS, 범용 양식은 OFP에서 읽은 KG/LB(모르면 숫자만)
+const fuelMul = () => (!model || model.fuelUnit === '100lb' || model.fuelUnit === undefined ? 100 : 1);
+const fuelUnitLabel = () => (!model || model.fuelUnit === '100lb' || model.fuelUnit === 'lb' || model.fuelUnit === undefined ? t('lbs') : model.fuelUnit === 'kg' ? 'kg' : '');
+const fmtFuel = (v) => v == null ? '—' : `${(v * fuelMul()).toLocaleString()}${fuelUnitLabel() ? ' ' + fuelUnitLabel() : ''}`;
 const hm = (s) => s ? s.replace('.', ':') : '—';
 const hmFromMin = (m) => m == null ? '—' : `${Math.floor(m / 60)}:${String(Math.round(m) % 60).padStart(2, '0')}`;
 const SR_MIN = 4;
@@ -67,7 +72,7 @@ function srRuns(leg) {
   return runs;
 }
 function buildModel(rawText) {
-  const m = parseOFP(rawText);
+  const m = parseOFP(rawText, { airportCoord: (icao) => { const c = apCoords(icao); return c.lat != null ? { lat: c.lat, lon: c.lon } : null; } });
   if (!m.ok) return m;
   m._flTrade = flTrade(m);
   m._leg = mainLeg(m);
@@ -223,6 +228,30 @@ function airportCard(icao, { removable = false, roleLabel = null, offsetMin = nu
 
 // ── 카드 프레임 ──────────────────────────────────────────
 
+// ── 범용 양식: 무엇을 읽었고 무엇을 못 읽었는지 + 내용 없는 '줄 모양' 진단 복사 ──
+function genericPanel(m) {
+  const g = m.generic || {};
+  const det = document.createElement('details'); det.className = 'gen-panel'; det.open = true;
+  det.append(el('summary', null, '🧩 ' + t('genTitle')));
+  det.append(el('div', 'sub-line', t('genWhy')));
+  const row = (ok, label, text) => { const d = el('div', 'stor-row' + (ok === false ? ' bad' : '')); const ic = el('span', 'stor-ic', ok ? '✓' : ok === false ? '✗' : '–'); ic.setAttribute('aria-hidden', 'true'); d.append(ic, el('b', null, label), document.createTextNode(' ' + text)); det.append(d); };
+  row(true, t('genFpl'), `${m.depIcao || '?'}→${m.destIcao || '?'}${m.plannedFL ? ' · FL' + m.plannedFL : ''}`);
+  row(!!m.etdDate, t('genTimes'), m.etdDate ? (g.times ? t('genTimesEst') : '✓') : t('genNone'));
+  row(!!m.fuel, t('genFuel'), m.fuel ? `${Object.keys(m.fuel).length}${t('genItems')} · ${t('genUnit')} ${m.fuelUnit === 'kg' ? 'kg' : m.fuelUnit === 'lb' ? 'lb' : m.fuelUnit === '100lb' ? '100 lb' : t('genUnitUnknown')}` : t('genNone'));
+  const nv = g.navlog;
+  row(nv ? (nv.missing?.length ? false : nv.resolved > 0 || nv.total === 0 ? true : null) : false, t('genRoute'),
+    !nv ? t('genNone') : nv.missing?.length ? t('genRouteNoApt').replace('{a}', nv.missing.join(', ')) : `${nv.resolved}/${nv.total} ${t('genRoutePts')}${nv.straight ? ' · ' + t('genStraight') : ''}${nv.rejected ? ' · ' + t('genRejected').replace('{n}', nv.rejected) : ''}${nv.distNm ? ` · ${nv.distNm}NM` : ''}`);
+  row(false, t('genWind'), t('genWindNo'));
+  row(m._notam ? true : null, 'NOTAM', m._notam ? `${m._notam.items.length}${t('genItems')}` : t('genNotamNo'));
+  const cp = el('button', 'chip', t('genCopy'));
+  cp.onclick = () => {
+    const raw = store.get('sw_ofp_text', '');
+    const flags = [`SkyWorker ${APP_VER} format report`, `src=${m.src} fpl=${!!m.fpl} times=${!!m.etdDate} fuel=${m.fuel ? Object.keys(m.fuel).join('+') : '-'} unit=${m.fuelUnit || '?'} route=${nv ? nv.resolved + '/' + nv.total : '-'} notam=${m._notam ? m._notam.items.length : 0} lines=${raw.split('\n').length}`];
+    navigator.clipboard?.writeText([...flags, '', ...formatSignature(raw)].join('\n')).then(() => { cp.textContent = t('copied'); setTimeout(() => { cp.textContent = t('genCopy'); }, 1500); }).catch(() => {});
+  };
+  det.append(cp, el('div', 'sub-line', t('genCopyNote')));
+  return det;
+}
 function cardVisible(id) { return store.get('sw_card_' + id, '1') === '1'; }
 function briefCard(id, title, build) {
   if (!cardVisible(id)) return null;
@@ -232,7 +261,7 @@ function briefCard(id, title, build) {
   d.addEventListener('toggle', () => store.set('sw_open_' + id, d.open ? '1' : '0'));
   const sum = el('summary', 'card-sum', title);
   const checks = (model?._checks || []).filter((c) => c.card === id);
-  const bad = checks.filter((c) => !c.ok);
+  const bad = checks.filter((c) => !c.ok && !c.soft);
   if (checks.length) { const bg = el('span', 'chk-badge ' + (bad.length ? 'chk-bad' : 'chk-ok'), bad.length ? `⚠ ${bad.length}` : '✓'); bg.title = bad.length ? t('chkBadTitle') : t('chkOkTitle'); sum.append(bg); }
   d.append(sum);
   const body = el('div', 'card-body');
@@ -243,17 +272,18 @@ function briefCard(id, title, build) {
   d.append(body);
   return d;
 }
-function chkFmt(v, unit) { return unit === 'lbs100' ? p100lbs(v) : unit === 'min' ? hmFromMin(v) : String(v); }
+function chkFmt(v, unit) { return unit === 'fuel' ? fmtFuel(v) : unit === 'min' ? hmFromMin(v) : String(v); }
 function chkLine(c) {
   const A = chkFmt(c.a, c.unit), B = chkFmt(c.b, c.unit);
   if (c.key === 'blockTrip') return `${c.ok ? '✓' : '⚠'} ${t('chk_' + c.key)}: ${A} · TRIP ${B}`; // 블록시간은 TRIP+지상이라 '='가 아님
   const op = !c.ok ? '≠' : c.a === c.b ? '=' : '≈'; // 반올림 오차 안이면 ≈
+  if (c.soft && !c.ok) return `• ${t('chk_' + c.key)}: ${A} ${op} ${B} — ${t('chkSoft')}`; // 범용 양식: 회사마다 공식이 달라 참고만
   return `${c.ok ? '✓' : '⚠'} ${t('chk_' + c.key)}: ${A} ${op} ${B}`;
 }
 function checkSummary(b) {
   const cs = model._checks || [];
   if (!cs.length) return;
-  const bad = cs.filter((c) => !c.ok);
+  const bad = cs.filter((c) => !c.ok && !c.soft);
   const det = document.createElement('details'); det.className = 'chk-sum ' + (bad.length ? 'chk-bad' : 'chk-ok');
   det.open = bad.length > 0;
   det.append(el('summary', null, bad.length ? `⚠ ${t('chkSumBad').replace('{n}', bad.length).replace('{t}', cs.length)}` : `✓ ${t('chkSumOk').replace('{t}', cs.length)}`));
@@ -289,7 +319,7 @@ function summaryCard() {
       hero.append(bar);
     }
     b.append(hero);
-    if (m.src === 'ICAO-FPL') b.append(el('div', 'note', t('genericNote')));
+    if (m.src === 'ICAO-FPL') b.append(genericPanel(m));
     if (m.src === 'OZ-DOM') b.append(el('div', 'note', t('domNote')));
     checkSummary(b);
     if (m._similar?.length) b.append(el('div', 'note warn-note', `🚨 ${t('similarCs')}: ${m._similar.join(', ')}`));
@@ -299,7 +329,7 @@ function summaryCard() {
       ['STA', m.dest?.sta && m.dest.sta !== m.dest.eta ? fmtHmZ(m.dest.sta, m.dest.tzMin) : null],
       ['ETA', m.dest?.eta ? fmtHmZ(m.dest.eta, m.dest.tzMin) : null],
       [t('planFl'), m.plannedFL ? 'FL' + m.plannedFL : null],
-      [t('dist'), m.dist ? `${m.dist.gnd}nm (GND)` : null],
+      [t('dist'), m.dist ? `${m.dist.gnd}nm ${m.dist.est ? '(' + t('estShort') + ')' : '(GND)'}` : null],
       [t('avgWind'), m.avgComp != null ? `${m.avgComp >= 0 ? '+' : ''}${m.avgComp}kt` : null],
       [t('block'), m.eetTotal ? hmFromMin(m.eetTotal) : null],
       [t('validity'), m.validity || null],
@@ -314,6 +344,7 @@ function mapCard() {
   const m = model;
   if (!m._route?.length) return null;
   return briefCard('map', t('cardMap'), (b) => {
+    if (model.navlogEst) b.append(el('div', 'note', t('estRouteNote')));
     mapHost = el('div', 'map-host');
     b.append(mapHost);
     const legend = el('div', 'map-legend');
@@ -801,24 +832,25 @@ function srCard() {
 function fuelCard() {
   if (!model.fuel) return null;
   return briefCard('fuel', t('cardFuel'), (b) => {
-    const f = model.fuel;
+    const f = model.fuel, FU = fuelMul(), UL = fuelUnitLabel();
     const tb = el('table', 'data-table');
-    const thead = el('tr'); [t('fuelItem'), t('fuelLbs'), t('fuelTime')].forEach((h) => thead.append(el('th', null, h))); tb.append(thead);
+    const thead = el('tr'); [t('fuelItem'), UL ? `${t('fuelCol')} (${UL})` : t('fuelCol'), t('fuelTime')].forEach((h) => thead.append(el('th', null, h))); tb.append(thead);
     const rows = [['fTrip', f.trip], ['fCont', f.cont], ['fAltn', f.altn, model.altnIcao], ['fFrsv', f.frsv], ['fRqrd', f.rqrd], ['fExtra', f.extra, f.extra?.extra ? 'RSN/' + f.extra.extra : null], ['fTkof', f.tkof], ['fTaxi', f.taxi], ['fRamp', f.ramp], ['fFod', f.fod]];
     for (const [key, v, note] of rows) {
       if (!v) continue;
       const tr = el('tr', ['fRqrd', 'fTkof', 'fRamp', 'fFod'].includes(key) ? 'row-strong' : null);
-      tr.append(el('td', null, t(key) + (note ? ` ${note}` : '')), el('td', 'num', p100lbs(v.v)), el('td', 'num', hm(v.time)));
+      tr.append(el('td', null, t(key) + (note ? ` ${note}` : '')), el('td', 'num', fmtFuel(v.v)), el('td', 'num', hm(v.time)));
       tb.append(tr);
     }
     b.append(tb);
     const w = model.weights || {};
-    kv(b, [['TOW', p100lbs(w.tow)], ['LDW', p100lbs(w.ldw)], ['ZFW', p100lbs(w.zfw)], ['AGTOW', p100lbs(w.agtow)]]);
+    kv(b, [['TOW', fmtFuel(w.tow)], ['LDW', fmtFuel(w.ldw)], ['ZFW', fmtFuel(w.zfw)], ['AGTOW', fmtFuel(w.agtow)]]);
     // 실제 RAMP 입력 → 재계산 (OFP의 ZFW·TAXI·TRIP·한계 사용)
     const key = 'sw_ramp_' + (model.callsign || '') + (model.date?.toISOString().slice(0, 10) || '');
-    const inRow = el('div', 'fuel-in');
+    if (!w.zfw) b.append(el('div', 'sub-line', t('rampNeedZfw')));
+    const inRow = el('div', 'fuel-in'); if (!w.zfw) inRow.hidden = true;
     const lab = el('label', null, t('actualRamp'));
-    const inp = el('input'); inp.type = 'number'; inp.placeholder = String((f.ramp?.v || 0) * 100); inp.value = store.get(key, '');
+    const inp = el('input'); inp.type = 'number'; inp.placeholder = String((f.ramp?.v || 0) * FU); inp.value = store.get(key, '');
     inRow.append(lab, inp, el('span', 'sub-line', t('fuelRecalc')));
     b.append(inRow);
     const out = el('div'); b.append(out);
@@ -827,41 +859,41 @@ function fuelCard() {
       const ramp = parseFloat(inp.value);
       if (!ramp || !w.zfw) return;
       store.set(key, inp.value);
-      const taxi = (f.taxi?.v || 0) * 100, trip = (f.trip?.v || 0) * 100;
-      const tow = w.zfw * 100 + ramp - taxi, ldw = tow - trip, fod = ramp - taxi - trip;
-      const minLdg = ((f.altn?.v || 0) + (f.frsv?.v || 0)) * 100;
+      const taxi = (f.taxi?.v || 0) * FU, trip = (f.trip?.v || 0) * FU;
+      const tow = w.zfw * FU + ramp - taxi, ldw = tow - trip, fod = ramp - taxi - trip;
+      const minLdg = ((f.altn?.v || 0) + (f.frsv?.v || 0)) * FU;
       kv(out, [
-        [t('estTow'), `${tow.toLocaleString()} ${t('lbs')}${w.agtow ? ` (AGTOW −${(w.agtow * 100 - tow).toLocaleString()})` : ''}`, w.agtow && tow > w.agtow * 100 ? 'bad' : 'good'],
-        [t('estLdw'), `${ldw.toLocaleString()} ${t('lbs')}`],
-        [t('estFod'), `${fod.toLocaleString()} ${t('lbs')}`, fod < minLdg ? 'bad' : 'good'],
-        [t('minLdgFuel'), `${minLdg.toLocaleString()} ${t('lbs')}`],
-        [t('holdMargin'), `${(fod - minLdg).toLocaleString()} ${t('lbs')}`, fod - minLdg < 0 ? 'bad' : 'good'],
+        [t('estTow'), `${tow.toLocaleString()} ${UL}${w.agtow ? ` (AGTOW −${(w.agtow * FU - tow).toLocaleString()})` : ''}`, w.agtow && tow > w.agtow * FU ? 'bad' : 'good'],
+        [t('estLdw'), `${ldw.toLocaleString()} ${UL}`],
+        [t('estFod'), `${fod.toLocaleString()} ${UL}`, fod < minLdg ? 'bad' : 'good'],
+        [t('minLdgFuel'), `${minLdg.toLocaleString()} ${UL}`],
+        [t('holdMargin'), `${(fod - minLdg).toLocaleString()} ${UL}`, fod - minLdg < 0 ? 'bad' : 'good'],
       ]);
     };
     inp.oninput = recalc; recalc();
     // 홀딩 가능 시간(F-RSV 유량 역산) + 현재 FOB → 예상 FOD
     const fm = String(f.frsv?.time || '').match(/(\d{1,2})[.:](\d{2})/);
-    const frsvMin = (fm ? +fm[1] * 60 + +fm[2] : 0) || 30;
-    const rate = f.frsv?.v ? (f.frsv.v * 100) / frsvMin : null; // lbs/min
-    const minLdg = ((f.altn?.v || 0) + (f.frsv?.v || 0)) * 100;
-    const fodPlan = (f.fod?.v || 0) * 100;
-    if (rate) kv(b, [[t('holdRate'), `${Math.round(rate)} ${t('lbs')}/${t('min')}`], [t('holdMin'), fodPlan ? `${Math.max(0, Math.floor((fodPlan - minLdg) / rate))}${t('min')}` : '—', fodPlan - minLdg < 0 ? 'bad' : 'good']]);
+    const frsvMin = fm ? +fm[1] * 60 + +fm[2] : (model.generic ? 0 : 30); // 아시아나는 F-RSV 30분 고정 양식, 범용은 시간을 읽었을 때만
+    const rate = f.frsv?.v && frsvMin ? (f.frsv.v * FU) / frsvMin : null; // 단위/분
+    const minLdg = ((f.altn?.v || 0) + (f.frsv?.v || 0)) * FU;
+    const fodPlan = (f.fod?.v || 0) * FU;
+    if (rate) kv(b, [[t('holdRate'), `${Math.round(rate)} ${UL}/${t('min')}`], [t('holdMin'), fodPlan ? `${Math.max(0, Math.floor((fodPlan - minLdg) / rate))}${t('min')}` : '—', fodPlan - minLdg < 0 ? 'bad' : 'good']]);
     const pos = curPosition();
     const fobRow = el('div', 'fuel-in');
-    const fobIn = el('input'); fobIn.type = 'number'; fobIn.placeholder = t('lbs'); fobIn.value = store.get('sw_fob_' + flightKey(model), '');
+    const fobIn = el('input'); fobIn.type = 'number'; fobIn.placeholder = UL || ''; fobIn.value = store.get('sw_fob_' + flightKey(model), '');
     fobRow.append(el('label', null, t('curFob')), fobIn, el('span', 'sub-line', pos ? `${t('posBasis')}: ${model._leg[pos.idx]?.point || '—'}` : t('nearNeedPos')));
     b.append(fobRow);
     const fobOut = el('div'); b.append(fobOut);
     const fobCalc = () => {
       fobOut.replaceChildren();
       const fob = parseFloat(fobIn.value); if (!fob) return; store.set('sw_fob_' + flightKey(model), fobIn.value);
-      const trip = (f.trip?.v || 0) * 100;
+      const trip = (f.trip?.v || 0) * FU;
       const here = pos && pos.idx != null ? model._leg[pos.idx] : null;
-      const burned = here?.accFuel != null ? here.accFuel * 100 : null;
+      const burned = here?.accFuel != null ? here.accFuel * FU : null;
       if (burned == null) { fobOut.append(el('div', 'note', t('fobNeedPos'))); return; }
       const remain = Math.max(0, trip - burned);
       const fodEst = fob - remain;
-      kv(fobOut, [[t('remainTrip'), `${remain.toLocaleString()} ${t('lbs')}`], [t('estFod'), `${fodEst.toLocaleString()} ${t('lbs')}`, fodEst < minLdg ? 'bad' : 'good'], [t('holdMinEst'), rate ? `${Math.max(0, Math.floor((fodEst - minLdg) / rate))}${t('min')}` : '—', fodEst - minLdg < 0 ? 'bad' : 'good']]);
+      kv(fobOut, [[t('remainTrip'), `${remain.toLocaleString()} ${UL}`], [t('estFod'), `${fodEst.toLocaleString()} ${UL}`, fodEst < minLdg ? 'bad' : 'good'], [t('holdMinEst'), rate ? `${Math.max(0, Math.floor((fodEst - minLdg) / rate))}${t('min')}` : '—', fodEst - minLdg < 0 ? 'bad' : 'good']]);
     };
     fobIn.oninput = fobCalc; fobCalc();
     if (model.remarks?.length) { b.append(el('div', 'sect-title', t('dispRemark'))); model.remarks.forEach((r) => b.append(el('div', 'note', r))); }
@@ -892,6 +924,7 @@ function timelineCard() {
   const m = model;
   if (!m.etdDate) return null;
   return briefCard('timeline', t('cardTimeline'), (b) => {
+    if (m.navlogEst) b.append(el('div', 'note', t('estTimeNote')));
     const rows = [[t('tlEtd'), m.etdDate, m.dep?.tzMin, m.depIcao]];
     const toc = m._leg?.find((r) => r.point === 'TOC');
     if (toc?.accMin != null) rows.push([t('tlToc'), new Date(m.etdDate.getTime() + toc.accMin * 60000), null, null]);
@@ -978,7 +1011,7 @@ function altnCard() {
   return briefCard('altn', t('cardAltn'), (b) => {
     const tb = el('table', 'data-table');
     const thead = el('tr'); ['ALTN', t('altnRwy'), t('altnDist'), t('altnFl'), t('altnTime'), t('compCol'), t('altnFuel'), t('altnRte')].forEach((h) => thead.append(el('th', null, h))); tb.append(thead);
-    model.altnSummary.forEach((a) => { const tr = el('tr'); tr.append(el('td', null, a.icao), el('td', null, a.rwy), el('td', 'num', a.dist + 'nm'), el('td', 'num', 'FL' + a.fl), el('td', 'num', hm(a.time)), el('td', 'num', a.comp == null ? '—' : (a.comp >= 0 ? '+' : '') + a.comp + 'kt'), el('td', 'num', p100lbs(a.fuel)), el('td', 'rte', a.rte)); tb.append(tr); });
+    model.altnSummary.forEach((a) => { const tr = el('tr'); tr.append(el('td', null, a.icao), el('td', null, a.rwy), el('td', 'num', a.dist + 'nm'), el('td', 'num', 'FL' + a.fl), el('td', 'num', hm(a.time)), el('td', 'num', a.comp == null ? '—' : (a.comp >= 0 ? '+' : '') + a.comp + 'kt'), el('td', 'num', fmtFuel(a.fuel)), el('td', 'rte', a.rte)); tb.append(tr); });
     b.append(tb);
   });
 }
@@ -1052,7 +1085,7 @@ function briefText() {
   const m = model, L = [];
   L.push(`${m.fltNo || m.callsign} ${m.depIcao}→${m.destIcao} ${m.date ? m.date.toISOString().slice(0, 10) : ''} ${m.reg || ''}`);
   L.push(`ETD ${fmtHmZ(m.dep?.etd, m.dep?.tzMin)} ETA ${fmtHmZ(m.dest?.eta, m.dest?.tzMin)} FL${m.plannedFL || '—'} ${m.dist ? m.dist.gnd + 'nm' : ''} WIND ${m.avgComp >= 0 ? '+' : ''}${m.avgComp ?? '—'}kt`);
-  if (m.fuel) L.push(`FUEL TRIP ${p100lbs(m.fuel.trip?.v)} / TKOF ${p100lbs(m.fuel.tkof?.v)} / FOD ${p100lbs(m.fuel.fod?.v)} / EXTRA ${p100lbs(m.fuel.extra?.v)}${m.fuel.extra?.extra ? ' ' + m.fuel.extra.extra : ''}`);
+  if (m.fuel) L.push(`FUEL TRIP ${fmtFuel(m.fuel.trip?.v)} / TKOF ${fmtFuel(m.fuel.tkof?.v)} / FOD ${fmtFuel(m.fuel.fod?.v)} / EXTRA ${fmtFuel(m.fuel.extra?.v)}${m.fuel.extra?.extra ? ' ' + m.fuel.extra.extra : ''}`);
   [m.depIcao, m.destIcao, ...(m.altn || [])].forEach((i) => { const w = wxCache.mMap[i]; if (w) L.push(`${i}: ${w.rawOb}`); });
   if (m._flTrade) L.push('FL TRADE: ' + m._flTrade.levels.map((l) => `FL${l.fl} ${l.dMin >= 0 ? '+' : ''}${l.dMin}m`).join(' | '));
   m._srRuns.forEach((r) => L.push(`SR${r.max} ${m._leg[r.s]?.point}→${m._leg[r.i1]?.point} T+${hmFromMin(r.t0)}~${hmFromMin(r.t1)}`));
@@ -1160,6 +1193,7 @@ async function refreshWx() {
     if (tr.status === 'fulfilled') (tr.value || []).forEach((f) => { next.tMap[f.icaoId] = f; });
     wxCache = next;
     store.set('sw_snapshot', JSON.stringify(wxCache));
+    if (model?.generic?.navlog?.missing?.length) model = null; // METAR 좌표로 출발·도착을 채워 범용 경로를 다시 만든다
     $('#offlineNote').hidden = true;
   } else {
     try { wxCache = JSON.parse(store.get('sw_snapshot', 'null')) || wxCache; } catch {}

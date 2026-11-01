@@ -275,3 +275,6 @@ body[data-theme="light"] .fl-note b { color:#92400e; }
 .sig-item.sig-red { border-left-color:#ef4444; } .sig-item.sig-amber { border-left-color:#f59e0b; } .sig-item.sig-yellow { border-left-color:#eab308; }
 .sig-dot { margin-right:6px; } .sig-item .raw { white-space:pre-wrap; cursor:default; }
 .sig-pirep { font-size:12.5px; padding:3px 0; border-top:1px dashed var(--line); }
+
+/* 범용 양식 인식 (v0.11) */
+.gen-panel { margin:8px 0; font-size:12.5px; border:1px dashed var(--line); border-radius:10px; padding:6px 10px; } .gen-panel > summary { cursor:pointer; font-weight:600; } .gen-panel .chip { margin:6px 0 2px; }

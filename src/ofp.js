@@ -1,4 +1,5 @@
 // OFP 텍스트 파서 — OZ(APMS/Lido) 1차 + ICAO FPL 블록 범용 폴백. 원문은 기기 밖으로 나가지 않는다(R4)
+import { buildGenericNavlog, parseGenericFuel, detectFuelUnit } from './generic.js';
 const MONTHS = { JAN: 0, FEB: 1, MAR: 2, APR: 3, MAY: 4, JUN: 5, JUL: 6, AUG: 7, SEP: 8, OCT: 9, NOV: 10, DEC: 11 };
 
 function hmToMin(hm) { const m = String(hm || '').match(/(\d{1,2})[.:](\d{2})/); return m ? parseInt(m[1], 10) * 60 + parseInt(m[2], 10) : null; }
@@ -402,18 +403,19 @@ function parseApmsFuel(text, model) {
   if (Object.keys(w).length) model.weights = w;
 }
 
-export function parseOFP(raw) {
+export function parseOFP(raw, opts = {}) {
   const text = raw.replace(/\r/g, '');
   const fpl = parseFplBlock(text);
   const model = { ok: false, src: 'NONE', fpl, warnings: [] };
 
   // 국내선 DOM FLT PLAN & RLS SHEET
-  if (/DOM\s+FLT\s+PLAN/.test(text) && parseDom(text, fpl, model)) return model;
+  if (/DOM\s+FLT\s+PLAN/.test(text) && parseDom(text, fpl, model)) { model.fuelUnit = '100lb'; return model; }
 
   // CFP 포맷(FLIGHT RELEASE) 우선 — 실제 브리핑 PDF가 이 양식
   if (/FLIGHT RELEASE\s+[A-Z]{3}\d/.test(text) && /RQD TAKEOFF/.test(text)) {
     if (parseCfp(text, fpl, model)) {
       if (!model.windMatrix) model.warnings.push('noWindMatrix');
+      model.fuelUnit = '100lb';
       return model;
     }
   }
@@ -487,8 +489,31 @@ export function parseOFP(raw) {
   setDates(model);
 
   // ── 판정 ──
-  if (model.depIcao && model.destIcao && (model.fuel || model.navlog?.length)) { model.ok = true; model.src = 'OZ-APMS'; }
+  // APMS는 머리줄(편명·날짜·기번) 또는 구간줄이 있어야 — 연료 숫자 하나만 보고 판정하면 타사 양식을 APMS로 오판한다
+  if ((head || leg) && model.depIcao && model.destIcao && (model.fuel || model.navlog?.length)) { model.ok = true; model.src = 'OZ-APMS'; }
   else if (fpl && fpl.dep && fpl.dest) { model.ok = true; model.src = 'ICAO-FPL'; model.warnings.push('generic'); }
+  model.fuelUnit = model.src === 'OZ-APMS' ? '100lb' : null;
+  // ── 범용 보강 (회사 전용 파서가 못 읽은 양식): 연료표 라벨 · FPL 경로+본문 좌표로 추정 항법로그 ──
+  if (model.ok && model.src === 'ICAO-FPL') {
+    model.generic = { fuel: false, navlog: null, times: false };
+    // 시각: FPL의 DOF(운항일)+EOBT, ETA는 EOBT+총 EET (블록 출발 기준 추정)
+    const dof = text.match(/DOF\/(\d{2})(\d{2})(\d{2})/);
+    if (!model.etdDate && dof && fpl?.eobt) {
+      model.date = new Date(Date.UTC(2000 + +dof[1], +dof[2] - 1, +dof[3]));
+      const f = (hhmm) => `${hhmm.slice(0, 2)}.${hhmm.slice(2)}`;
+      model.dep = { icao: fpl.dep, iata: null, tzMin: null, std: f(fpl.eobt), etd: f(fpl.eobt) };
+      if (fpl.eetTotal) { const etaMin = (+fpl.eobt.slice(0, 2) * 60 + +fpl.eobt.slice(2) + model.eetTotal) % 1440; model.dest = { icao: fpl.dest, iata: null, tzMin: null, sta: null, eta: `${String(Math.floor(etaMin / 60)).padStart(2, '0')}.${String(etaMin % 60).padStart(2, '0')}` }; }
+      setDates(model);
+      model.generic.times = true;
+    }
+    { const gf = parseGenericFuel(text); if (gf && (!model.fuel || Object.keys(gf).length > Object.keys(model.fuel).length)) { model.fuel = gf; model.generic.fuel = true; model.altnIcao = model.altnIcao || model.altn?.[0] || null; } } // APMS 규칙이 한두 줄만 건졌으면 범용 결과로
+    model.fuelUnit = model.generic.fuel ? detectFuelUnit(text, model.fuel) : (model.fuel ? '100lb' : null); // APMS 규칙으로 읽힌 연료면 100LBS
+    if (!model.navlog?.length) {
+      const g = buildGenericNavlog(model, text, opts.airportCoord);
+      model.generic.navlog = g ? { resolved: g.resolved, total: g.total, straight: !!g.straight, missing: g.missing || [], distNm: g.distNm || null, rejected: g.rejected || 0 } : null;
+      if (g?.navlog?.length) { model.navlog = g.navlog; model.navlogEst = true; if (!model.dist && g.distNm) model.dist = { gnd: g.distNm, air: null, est: true }; }
+    }
+  }
   if (model.ok && !model.windMatrix) model.warnings.push('noWindMatrix');
   if (model.ok && !model.navlog?.length) model.warnings.push('noNavlog');
   return model;
