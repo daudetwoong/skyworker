@@ -47,9 +47,9 @@
 
 ---
 
-## 2. 현재 상태 — v0.10 (2026-10-31, Worker 배포 대기)
+## 2. 현재 상태 — v0.10 (2026-11-01 라이브)
 
-**v0.10 추가**: 경로 SIGMET 지도 — 국제 SIGMET·PIREP을 Worker(/wx/isigmet, /wx/pirep)로 10° 격자 칸으로 받아(장거리·날짜변경선 OK) 경로 교차·통과 시각·고도로 🔴/🟠/🟡 분류, 새 카드·지도 점선 구역·타임라인, 기내용 스냅샷(SIGMET·PIREP 따로, 실패는 '못 받음')(src/sigmet.js). 지도 최대 확대 버그도 수정. **Worker는 `cd proxy && npx wrangler deploy` 형님 승인 후 배포, 그다음 사이트 push.**
+**v0.10 추가**: 경로 SIGMET 지도 — 국제 SIGMET·PIREP을 Worker(/wx/isigmet, /wx/pirep)로 10° 격자 칸으로 받아(장거리·날짜변경선 OK) 경로 교차·통과 시각·고도로 🔴/🟠/🟡 분류, 새 카드·지도 점선 구역·타임라인, 기내용 스냅샷(SIGMET·PIREP 따로, 실패는 '못 받음')(src/sigmet.js). 지도 최대 확대 버그도 수정. Worker(skyworker-wx v0.3)와 사이트 모두 라이브. **Worker 배포(`cd proxy && npx wrangler deploy`)는 운영 배포라 형님 승인 후에만**, 순서는 Worker 먼저 → 사이트 push.
 
 **v0.9 추가**: 저장 소실 방어 — 영구 저장 요청, 홈 화면 설치 안내, 하단 '기기 저장 상태' 패널(오프라인 실행 준비 포함), 저장 막힌 환경에서도 세션 동안 동작(src/storage.js, app.js store). **비행 전날 이 패널이 ✓인지 확인하라고 안내**.
 
@@ -145,7 +145,7 @@ context-notes.md      결정·함정 기록(시간순)
 ## 6. 남은 백로그 (우선순위 순)
 
 1. **실비행 피드백 반영** — 형님이 다음 비행 OFP로 써보고 어긋나는 것(파싱 누락·시각·FL 수치·노탐 분류)부터 수정. 가장 중요. (v0.6에서 보관 PDF 10개는 자체 점검 완료)
-2. ForeFlight 비교에서 나온 개선 제안: ~~파싱 신뢰도 표시~~(v0.8 완료) · ~~저장 소실 방어~~(v0.9 완료) · ~~경로 SIGMET/PIREP 지도~~(v0.10, Worker 배포 대기) · 양식 범용화 · 영어. 근거는 SecondBrain `03 위키/decisions/SkyWorker vs ForeFlight 포지셔닝 2026-10.md`.
+2. ForeFlight 비교에서 나온 개선 제안: ~~파싱 신뢰도 표시~~(v0.8 완료) · ~~저장 소실 방어~~(v0.9 완료) · ~~경로 SIGMET/PIREP 지도~~(v0.10 완료) · 양식 범용화 · 영어. 근거는 SecondBrain `03 위키/decisions/SkyWorker vs ForeFlight 포지셔닝 2026-10.md`.
 3. 디자인 다듬기 — 친절모드 대비 "구리다"는 느낌을 없애기(형님 취향: 손그림·따뜻한 무드 아이콘, 콕핏용 야간 기본은 유지).
 3. 주기장·인천 운항이력(ICN_KEY를 Worker 비밀값으로 받으면 proxy에 data.go.kr 경로 추가 — 코드는 우리 것으로 새로 작성).
 4. KE(대한항공) OFP 파서 — 샘플 PDF 필요. 범용 폴백(ICAO FPL)은 이미 동작.

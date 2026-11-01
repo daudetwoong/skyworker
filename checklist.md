@@ -85,7 +85,7 @@
 ## Phase 2.10 — 경로 SIGMET 지도 (v0.10, ForeFlight 비교 3순위)
 
 - [x] Worker: /wx/isigmet?bbox (AWC 국제 SIGMET 5분 캐시+bbox 필터), /wx/pirep?bbox (최근 3h)
-- [ ] **Worker 배포** — 자동 배포가 권한 단계에서 막혀 형님 승인 대기 (`cd proxy && npx wrangler deploy`)
+- [x] Worker 배포 (2026-11-01 형님 승인, skyworker-wx v0.3) + 라이브 E2E(OZ335·OZ744 실PDF, 콘솔 에러 0)
 - [x] 경로 교차·통과 시각·고도 분류(🔴/🟠/🟡), 진입·이탈 분(이분법), 지난 OFP는 시각 판정 생략
 - [x] 새 카드 '⛈️ 경로 SIGMET'·지도 점선 구역·PIREP 마커·타임라인 🔴 진입, 기내용 스냅샷(오프라인 재실행 확인)
 - [x] 기존 지도 버그 수정: 연달아 렌더 시 떨어진 상자에 맞춤 → 최대 확대(13)가 저장되던 문제, 초기화 경쟁 에러
